@@ -519,6 +519,9 @@ def _parse_size_flavour(name: str) -> dict:
         if m4:
             cpu = int(m4.group(1))
 
+    if not gpu and not cpu:
+        raise ValueError(f"Could not parse CPU/GPU counts from size flavour name: {name!r}")
+
     return {"cpu": cpu, "gpu": gpu, "gpu_type": gpu_type}
 
 
