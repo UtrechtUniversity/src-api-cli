@@ -1,12 +1,15 @@
 """Tests for payload, datetime, and size flavour helpers."""
 from datetime import datetime, timedelta, timezone
+import asyncio
 
+import api
 import pytest
 from api import (
     _is_workspace_failure_status,
     _is_workspace_ready_status,
     _parse_size_flavour,
     build_create_payload,
+    get_workspaces,
     match_size_flavour,
 )
 from cli import resolve_workspace_end_time, validate_workspace_end_time
@@ -283,3 +286,125 @@ class TestWorkspaceStatusClassifiers:
         assert _is_workspace_failure_status("failed")
         assert _is_workspace_failure_status("unhealthy")
         assert not _is_workspace_failure_status("updating")
+
+
+class TestGetWorkspacesFilters:
+    @staticmethod
+    def _run(coro):
+        return asyncio.run(coro)
+
+    def test_single_status_is_sent_to_api(self, monkeypatch):
+        captured_params = []
+
+        async def fake_get_user_cos(session, name):
+            return [{"id": "co-1", "co_name": name}]
+
+        async def fake_make_request(session, method, base_url, path, params=None, data=None):
+            captured_params.append(params.copy())
+            return 200, {"results": [{"id": "ws-1", "status": "running", "meta": {}, "time_created": "2024-01-01"}], "next": None}
+
+        monkeypatch.setattr(api, "get_user_cos", fake_get_user_cos)
+        monkeypatch.setattr(api, "make_request", fake_make_request)
+
+        result = self._run(
+            get_workspaces(
+                object(),
+                "Example CO",
+                "",
+                status="running",
+            )
+        )
+
+        assert result[0]["id"] == "ws-1"
+        assert captured_params == [{
+            "co_id": "co-1",
+            "application_type": "Compute",
+            "deleted": "false",
+            "limit": 100,
+            "status": "running",
+            "offset": 0,
+        }]
+
+    def test_multiple_statuses_are_filtered_client_side(self, monkeypatch):
+        captured_params = []
+
+        async def fake_get_user_cos(session, name):
+            return [{"id": "co-1", "co_name": name}]
+
+        async def fake_make_request(session, method, base_url, path, params=None, data=None):
+            captured_params.append(params.copy())
+            return 200, {
+                "results": [
+                    {"id": "ws-1", "status": "running", "meta": {}, "time_created": "2024-03-01"},
+                    {"id": "ws-2", "status": "paused", "meta": {}, "time_created": "2024-02-01"},
+                    {"id": "ws-3", "status": "creating", "meta": {}, "time_created": "2024-01-01"},
+                ],
+                "next": None,
+            }
+
+        monkeypatch.setattr(api, "get_user_cos", fake_get_user_cos)
+        monkeypatch.setattr(api, "make_request", fake_make_request)
+
+        result = self._run(
+            get_workspaces(
+                object(),
+                "Example CO",
+                "",
+                status=("running", "paused"),
+            )
+        )
+
+        assert [workspace["id"] for workspace in result] == ["ws-1", "ws-2"]
+        assert "status" not in captured_params[0]
+
+    def test_attribute_filters_match_nested_interactive_parameters(self, monkeypatch):
+        async def fake_get_user_cos(session, name):
+            return [{"id": "co-1", "co_name": name}]
+
+        async def fake_make_request(session, method, base_url, path, params=None, data=None):
+            return 200, {
+                "results": [
+                    {
+                        "id": "ws-1",
+                        "status": "running",
+                        "time_created": "2024-03-01",
+                        "meta": {
+                            "application_name": "Ray Head Node",
+                            "interactive_parameters": [
+                                {"key": "jupyter_url", "value": "https://example.invalid"},
+                                {"key": "username", "value": "alice"},
+                            ],
+                        },
+                    },
+                    {
+                        "id": "ws-2",
+                        "status": "running",
+                        "time_created": "2024-02-01",
+                        "meta": {
+                            "application_name": "Ray Head Node",
+                            "interactive_parameters": [
+                                {"key": "username", "value": "bob"},
+                            ],
+                        },
+                    },
+                ],
+                "next": None,
+            }
+
+        monkeypatch.setattr(api, "get_user_cos", fake_get_user_cos)
+        monkeypatch.setattr(api, "make_request", fake_make_request)
+
+        result = self._run(
+            get_workspaces(
+                object(),
+                "Example CO",
+                "Ray Head Node",
+                attribute_filters={
+                    "meta.interactive_parameters": [
+                        {"key": "username", "value": "alice"},
+                    ],
+                },
+            )
+        )
+
+        assert [workspace["id"] for workspace in result] == ["ws-1"]

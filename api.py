@@ -2,6 +2,7 @@
 
 import logging
 import asyncio
+from collections.abc import Mapping, Sequence
 from urllib.parse import urljoin, quote_plus
 
 import aiohttp
@@ -138,6 +139,8 @@ async def get_workspaces(
     by_owner: bool = False,
     application_type: str = "Compute",
     workspace_name: str | None = None,
+    status: str | Sequence[str] | None = None,
+    attribute_filters: Mapping[str, object] | None = None,
 ) -> list:
     """
     Return existing (non-deleted) workspaces for a given CO and catalog item name.
@@ -152,6 +155,11 @@ async def get_workspaces(
         application_type:  Workspace type filter, e.g. Compute, Storage, IP, Network.
         workspace_name:    When given, only workspaces whose ``name`` matches
                            exactly are returned.
+        status:            Optional workspace status filter. Can be a single status
+                           string or a list/tuple of statuses such as
+                           ``"running"`` or ``("running", "paused")``.
+        attribute_filters: Optional nested attribute filters using dot-separated
+                           paths, e.g. ``{"meta.interactive_parameters": [...]}``.
 
     Returns:
         List of workspace dicts, sorted newest-first by time_created.
@@ -169,6 +177,9 @@ async def get_workspaces(
     }
     if by_owner:
         params["by_owner"] = "true"
+    normalized_statuses = _normalize_status_filter(status)
+    if len(normalized_statuses) == 1:
+        params["status"] = normalized_statuses[0]
 
     workspaces: list = []
     offset = 0
@@ -196,8 +207,62 @@ async def get_workspaces(
     if workspace_name:
         result = [ws for ws in result if ws.get("name") == workspace_name]
 
+    if len(normalized_statuses) > 1:
+        allowed_statuses = set(normalized_statuses)
+        result = [ws for ws in result if ws.get("status") in allowed_statuses]
+
+    if attribute_filters:
+        result = [ws for ws in result if _matches_attribute_filters(ws, attribute_filters)]
+
     result.sort(key=lambda ws: ws.get("time_created", ""), reverse=True)
     return result
+
+
+def _normalize_status_filter(status: str | Sequence[str] | None) -> tuple[str, ...]:
+    if status is None:
+        return ()
+    if isinstance(status, str):
+        normalized = status.strip()
+        return (normalized,) if normalized else ()
+
+    normalized_statuses: list[str] = []
+    for item in status:
+        if not isinstance(item, str):
+            raise ValueError(f"Workspace status filters must be strings, got {type(item).__name__}.")
+        normalized = item.strip()
+        if normalized:
+            normalized_statuses.append(normalized)
+    return tuple(normalized_statuses)
+
+
+def _get_nested_attribute(data: Mapping[str, object], path: str) -> object:
+    current: object = data
+    for segment in path.split("."):
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(segment)
+    return current
+
+
+def _matches_expected_value(actual: object, expected: object) -> bool:
+    if isinstance(expected, Mapping):
+        if not isinstance(actual, Mapping):
+            return False
+        return all(_matches_expected_value(actual.get(key), value) for key, value in expected.items())
+
+    if isinstance(expected, Sequence) and not isinstance(expected, (str, bytes, bytearray)):
+        if not isinstance(actual, Sequence) or isinstance(actual, (str, bytes, bytearray)):
+            return False
+        return all(any(_matches_expected_value(candidate, value) for candidate in actual) for value in expected)
+
+    return actual == expected
+
+
+def _matches_attribute_filters(workspace: Mapping[str, object], attribute_filters: Mapping[str, object]) -> bool:
+    for path, expected_value in attribute_filters.items():
+        if not _matches_expected_value(_get_nested_attribute(workspace, path), expected_value):
+            return False
+    return True
 
 
 async def get_networks(
@@ -759,7 +824,6 @@ async def wait_for_workspace(
 
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
-
 
 
 
