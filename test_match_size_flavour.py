@@ -9,6 +9,7 @@ from api import (
     _is_workspace_ready_status,
     _parse_size_flavour,
     build_create_payload,
+    is_workspace_running,
     pause_workspace,
     get_workspaces,
     match_size_flavour,
@@ -442,3 +443,27 @@ class TestWorkspaceActions:
         result = self._run(resume_workspace(object(), "ws-1"))
 
         assert result["status"] == "resuming"
+
+
+class TestWorkspaceRunningState:
+    @staticmethod
+    def _run(coro):
+        return asyncio.run(coro)
+
+    def test_is_workspace_running_returns_true_for_running_workspace(self, monkeypatch):
+        async def fake_get_workspace(session, workspace_id):
+            assert workspace_id == "ws-1"
+            return {"id": "ws-1", "status": "running"}
+
+        monkeypatch.setattr(api, "get_workspace", fake_get_workspace)
+
+        assert self._run(is_workspace_running(object(), "ws-1")) is True
+
+    def test_is_workspace_running_returns_false_for_paused_workspace(self, monkeypatch):
+        async def fake_get_workspace(session, workspace_id):
+            assert workspace_id == "ws-1"
+            return {"id": "ws-1", "status": "paused"}
+
+        monkeypatch.setattr(api, "get_workspace", fake_get_workspace)
+
+        assert self._run(is_workspace_running(object(), "ws-1")) is False

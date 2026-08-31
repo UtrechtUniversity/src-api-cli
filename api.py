@@ -365,6 +365,12 @@ async def resume_workspace(session: aiohttp.ClientSession, workspace_id: str) ->
     return await trigger_workspace_action(session, workspace_id, "resume")
 
 
+async def is_workspace_running(session: aiohttp.ClientSession, workspace_id: str) -> bool:
+    """Return whether a workspace is currently in the running state."""
+    workspace = await get_workspace(session, workspace_id)
+    return workspace.get("status") == "running"
+
+
 # ---------------------------------------------------------------------------
 # Resolution: names → IDs / full objects
 # ---------------------------------------------------------------------------
@@ -869,7 +875,6 @@ async def wait_for_workspace(
 
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
-
 
 
 
