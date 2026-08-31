@@ -16,6 +16,7 @@ from api import (
     DEFAULT_CLOUD_NAME,
     build_create_payload,
     create_network,
+    delete_workspace,
     get_catalog_items_with_offerings,
     get_expected_optional_parameter_keys,
     get_networks,
@@ -327,6 +328,20 @@ async def list_application_offerings_for_co(
         pretty(filtered_items)
 
 
+async def delete_workspace_by_id(
+    workspace_id: str,
+    dry_run: bool = False,
+):
+    async with aiohttp.ClientSession(headers=HEADERS) as session:
+        if dry_run:
+            print(f"Dry run: would delete workspace {workspace_id!r}")
+            print(f"  path: workspaces/{workspace_id}/")
+            return
+
+        await delete_workspace(session, workspace_id)
+        print(f"Deleted workspace {workspace_id!r}")
+
+
 async def create_workspace(
     co_name: str | None = None,
     wallet_name: str | None = None,
@@ -607,6 +622,14 @@ def main() -> None:
         help="Print the request that would be made and exit.",
     )
 
+    delete_workspace_parser = subparsers.add_parser("delete-workspace", help="Delete a workspace by ID.")
+    delete_workspace_parser.add_argument("--id", required=True, help="Workspace ID to delete.")
+    delete_workspace_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the request that would be made and exit.",
+    )
+
     get_workspaces_parser = subparsers.add_parser("get-workspaces", help="List workspaces in a CO.")
     get_workspaces_parser.add_argument("--co", help="CO name to inspect.")
     get_workspaces_parser.add_argument("--cloud", default=DEFAULT_CLOUD_NAME, help="Cloud subscription name filter.")
@@ -674,6 +697,13 @@ def main() -> None:
                 by_owner=args.by_owner,
                 catalog_item_name=args.catalog_item_name,
                 workspace_name=args.name,
+                dry_run=args.dry_run,
+            )
+        )
+    elif args.command == "delete-workspace":
+        asyncio.run(
+            delete_workspace_by_id(
+                workspace_id=args.id,
                 dry_run=args.dry_run,
             )
         )

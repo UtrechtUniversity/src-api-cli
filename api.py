@@ -371,6 +371,18 @@ async def is_workspace_running(session: aiohttp.ClientSession, workspace_id: str
     return workspace.get("status") == "running"
 
 
+async def delete_workspace(session: aiohttp.ClientSession, workspace_id: str) -> None:
+    """Delete a workspace by ID."""
+    status, response = await make_request(
+        session,
+        "DELETE",
+        WORKSPACE_BASE_URL,
+        f"workspaces/{quote_plus(workspace_id)}/",
+    )
+    if status != 204:
+        raise RuntimeError(f"Failed to delete workspace {workspace_id!r} (HTTP {status}): {response}")
+
+
 # ---------------------------------------------------------------------------
 # Resolution: names → IDs / full objects
 # ---------------------------------------------------------------------------
@@ -875,7 +887,6 @@ async def wait_for_workspace(
 
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
-
 
 
 

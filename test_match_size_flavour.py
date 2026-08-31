@@ -9,6 +9,7 @@ from api import (
     _is_workspace_ready_status,
     _parse_size_flavour,
     build_create_payload,
+    delete_workspace,
     is_workspace_running,
     pause_workspace,
     get_workspaces,
@@ -467,3 +468,21 @@ class TestWorkspaceRunningState:
         monkeypatch.setattr(api, "get_workspace", fake_get_workspace)
 
         assert self._run(is_workspace_running(object(), "ws-1")) is False
+
+
+class TestDeleteWorkspace:
+    @staticmethod
+    def _run(coro):
+        return asyncio.run(coro)
+
+    def test_delete_workspace_uses_delete_endpoint(self, monkeypatch):
+        async def fake_make_request(session, method, base_url, path, params=None, data=None):
+            assert method == "DELETE"
+            assert path == "workspaces/ws-1/"
+            assert params is None
+            assert data is None
+            return 204, ""
+
+        monkeypatch.setattr(api, "make_request", fake_make_request)
+
+        assert self._run(delete_workspace(object(), "ws-1")) is None
