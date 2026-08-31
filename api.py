@@ -36,15 +36,6 @@ def to_network_cloud_name(cloud_name: str) -> str:
     return f"{normalized} Network"
 
 
-def get_expected_optional_parameter_keys(offering: dict) -> set[str]:
-    expected = set()
-    for parameter in offering.get("overridable_parameters", []):
-        key = parameter.get("key")
-        if isinstance(key, str) and key:
-            expected.add(key)
-    return expected
-
-
 async def make_request(
     session: aiohttp.ClientSession,
     method: str,

@@ -18,7 +18,6 @@ from api import (
     create_network,
     delete_workspace,
     get_catalog_items_with_offerings,
-    get_expected_optional_parameter_keys,
     get_networks,
     get_offerings_for_item,
     get_workspaces,
@@ -491,7 +490,7 @@ async def create_workspace(
         )
 
         if optional_parameters:
-            expected_optional_parameter_keys = get_expected_optional_parameter_keys(offering)
+            expected_optional_parameter_keys = offering.get("optional_parameters", {}).keys()
             if expected_optional_parameter_keys:
                 unexpected = sorted(key for key in optional_parameters if key not in expected_optional_parameter_keys)
                 if unexpected:
