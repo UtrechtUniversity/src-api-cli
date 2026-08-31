@@ -320,6 +320,51 @@ async def get_networks(
     return networks
 
 
+async def get_workspace(session: aiohttp.ClientSession, workspace_id: str) -> dict:
+    """Return a single workspace by ID."""
+    status, response = await make_request(
+        session,
+        "GET",
+        WORKSPACE_BASE_URL,
+        f"workspaces/{quote_plus(workspace_id)}/",
+    )
+    if status != 200:
+        raise RuntimeError(f"Failed to retrieve workspace {workspace_id!r} (HTTP {status}): {response}")
+    return response
+
+
+async def trigger_workspace_action(
+    session: aiohttp.ClientSession,
+    workspace_id: str,
+    action_type: str,
+) -> dict:
+    """Trigger a documented workspace action such as pause or resume."""
+    normalized_action = action_type.strip().lower()
+    status, response = await make_request(
+        session,
+        "POST",
+        WORKSPACE_BASE_URL,
+        f"workspaces/{quote_plus(workspace_id)}/actions/{quote_plus(normalized_action)}/",
+        data={},
+    )
+    if status != 200:
+        raise RuntimeError(
+            f"Failed to trigger workspace action {normalized_action!r} for {workspace_id!r} "
+            f"(HTTP {status}): {response}"
+        )
+    return response
+
+
+async def pause_workspace(session: aiohttp.ClientSession, workspace_id: str) -> dict:
+    """Pause a workspace by ID."""
+    return await trigger_workspace_action(session, workspace_id, "pause")
+
+
+async def resume_workspace(session: aiohttp.ClientSession, workspace_id: str) -> dict:
+    """Resume a workspace by ID."""
+    return await trigger_workspace_action(session, workspace_id, "resume")
+
+
 # ---------------------------------------------------------------------------
 # Resolution: names → IDs / full objects
 # ---------------------------------------------------------------------------
@@ -824,7 +869,6 @@ async def wait_for_workspace(
 
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
-
 
 
 

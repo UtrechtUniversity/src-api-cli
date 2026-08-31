@@ -9,8 +9,10 @@ from api import (
     _is_workspace_ready_status,
     _parse_size_flavour,
     build_create_payload,
+    pause_workspace,
     get_workspaces,
     match_size_flavour,
+    resume_workspace,
 )
 from cli import resolve_workspace_end_time, validate_workspace_end_time
 
@@ -408,3 +410,35 @@ class TestGetWorkspacesFilters:
         )
 
         assert [workspace["id"] for workspace in result] == ["ws-1"]
+
+
+class TestWorkspaceActions:
+    @staticmethod
+    def _run(coro):
+        return asyncio.run(coro)
+
+    def test_pause_workspace_uses_pause_action_endpoint(self, monkeypatch):
+        async def fake_make_request(session, method, base_url, path, params=None, data=None):
+            assert method == "POST"
+            assert path == "workspaces/ws-1/actions/pause/"
+            assert data == {}
+            return 200, {"id": "ws-1", "status": "pausing"}
+
+        monkeypatch.setattr(api, "make_request", fake_make_request)
+
+        result = self._run(pause_workspace(object(), "ws-1"))
+
+        assert result["status"] == "pausing"
+
+    def test_resume_workspace_uses_resume_action_endpoint(self, monkeypatch):
+        async def fake_make_request(session, method, base_url, path, params=None, data=None):
+            assert method == "POST"
+            assert path == "workspaces/ws-1/actions/resume/"
+            assert data == {}
+            return 200, {"id": "ws-1", "status": "resuming"}
+
+        monkeypatch.setattr(api, "make_request", fake_make_request)
+
+        result = self._run(resume_workspace(object(), "ws-1"))
+
+        assert result["status"] == "resuming"
