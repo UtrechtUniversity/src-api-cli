@@ -1,4 +1,4 @@
-"""Tests for payload, datetime, and size flavour helpers (api.py)."""
+"""Tests for payload, datetime, and size flavour helpers."""
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -8,9 +8,8 @@ from api import (
     _parse_size_flavour,
     build_create_payload,
     match_size_flavour,
-    resolve_workspace_end_time,
-    validate_workspace_end_time,
 )
+from cli import resolve_workspace_end_time, validate_workspace_end_time
 
 
 # ---------------------------------------------------------------------------
