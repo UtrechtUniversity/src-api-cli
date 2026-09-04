@@ -33,34 +33,12 @@ from api import (
     wait_for_workspace,
 )
 from env import (
-    CATALOG_ITEM_NAME,
-    CLOUD_NAME,
-    CO_NAME,
-    DATASET_IDS,
-    DATASET_NAMES,
-    HOST_NAME_BASE,
-    IP_IDS,
-    NETWORK_IDS,
-    NETWORK_NAME,
-    OS_FLAVOUR_NAME,
     RESEARCH_CLOUD_TOKEN,
-    SIZE_FLAVOUR_NAME,
-    STORAGE_IDS,
-    WALLET_NAME,
     WORKSPACE_BASE_URL,
-    WORKSPACE_DESCRIPTION,
-    WORKSPACE_END_TIME,
-    WORKSPACE_NAME,
 )
 
 _REQUIRED = {
     "RESEARCH_CLOUD_TOKEN": RESEARCH_CLOUD_TOKEN,
-    "CO_NAME": CO_NAME,
-    "WALLET_NAME": WALLET_NAME,
-    "CATALOG_ITEM_NAME": CATALOG_ITEM_NAME,
-    "OS_FLAVOUR_NAME": OS_FLAVOUR_NAME,
-    "SIZE_FLAVOUR_NAME": SIZE_FLAVOUR_NAME,
-    "WORKSPACE_NAME": WORKSPACE_NAME,
 }
 
 HEADERS = {
@@ -69,7 +47,8 @@ HEADERS = {
     "content-type": "application/json",
 }
 
-DEFAULT_WORKSPACE_END_TIME_DAYS = 3
+DEFAULT_WORKSPACE_ENDTIME = timedelta(days=3)
+DEFAULT_HOST_NAME_PREFIX = "ws"
 
 
 def _random_suffix(length: int = 5) -> str:
@@ -173,17 +152,17 @@ def validate_workspace_end_time(end_time: str) -> None:
         parsed = datetime.fromisoformat(normalized)
     except ValueError as exc:
         raise ValueError(
-            "WORKSPACE_END_TIME must be a valid ISO 8601 datetime "
+            "--end-time must be a valid ISO 8601 datetime "
             "(for example 2026-12-31T23:59:59Z)."
         ) from exc
 
     if parsed.tzinfo is None:
-        raise ValueError("WORKSPACE_END_TIME must include a timezone (use trailing 'Z' for UTC).")
+        raise ValueError("--end-time must include a timezone (use trailing 'Z' for UTC).")
 
     now_utc = datetime.now(timezone.utc)
     if parsed <= now_utc:
         raise ValueError(
-            f"WORKSPACE_END_TIME must be in the future. Current UTC time is "
+            f"--end-time must be in the future. Current UTC time is "
             f"{now_utc.isoformat().replace('+00:00', 'Z')}."
         )
 
@@ -192,19 +171,19 @@ def resolve_workspace_end_time(end_time: str | None) -> str:
     """Return provided end time, or default to 3 days in the future (UTC)."""
     if end_time and end_time.strip():
         return end_time.strip()
-    return (datetime.now(timezone.utc) + timedelta(days=DEFAULT_WORKSPACE_END_TIME_DAYS)).strftime(
+    return (datetime.now(timezone.utc) + DEFAULT_WORKSPACE_ENDTIME).strftime(
         "%Y-%m-%dT%H:%M:%SZ"
     )
 
 
 async def list_networks_for_co(
-    co_name: str | None = None,
+    co_name: str,
     cloud_name: str = DEFAULT_CLOUD_NAME,
     by_owner: bool = False,
     dry_run: bool = False,
 ):
     async with aiohttp.ClientSession(headers=HEADERS) as session:
-        co = await resolve_co(session, co_name or CO_NAME)
+        co = await resolve_co(session, co_name)
         if dry_run:
             print(f"Dry run: would list private networks for CO {co['co_name']!r}  (id: {co['id']})")
             print(
@@ -219,34 +198,36 @@ async def list_networks_for_co(
 
 
 async def create_network_for_co(
-    co_name: str | None = None,
-    wallet_name: str | None = None,
-    cloud_name: str | None = None,
+    co_name: str,
+    wallet_name: str,
+    cloud_name: str = DEFAULT_CLOUD_NAME,
     network_name: str | None = None,
+    network_name_hint: str | None = None,
+    host_name_base: str = "ws",
     dry_run: bool = False,
 ):
     async with aiohttp.ClientSession(headers=HEADERS) as session:
         co, wallet = await asyncio.gather(
-            resolve_co(session, co_name or CO_NAME),
-            resolve_wallet(session, wallet_name or WALLET_NAME),
+            resolve_co(session, co_name),
+            resolve_wallet(session, wallet_name),
         )
         if dry_run:
             print(f"Dry run: would create private network in CO {co['co_name']!r} using wallet {wallet['name']!r}")
-            print(f"  network_name: {network_name or f'{HOST_NAME_BASE}-network-{_random_suffix()}'}")
-            print(f"  cloud_name: {cloud_name or CLOUD_NAME}")
-            print(f"  network_cloud_name: {to_network_cloud_name(cloud_name or CLOUD_NAME)}")
+            print(f"  network_name: {network_name or f'{host_name_base}-network-{_random_suffix()}'}")
+            print(f"  cloud_name: {cloud_name}")
+            print(f"  network_cloud_name: {to_network_cloud_name(cloud_name)}")
             return
 
-        net_name = network_name or f"{HOST_NAME_BASE}-network-{_random_suffix()}"
+        net_name = network_name or f"{host_name_base}-network-{_random_suffix()}"
         products = wallet["budgets"][0]["products"]
         network_id = await create_network(
             session,
             co,
             wallet,
             products,
-            cloud_name or CLOUD_NAME,
+            cloud_name,
             net_name,
-            network_name_hint=NETWORK_NAME,
+            network_name_hint=network_name_hint,
         )
         print(f"Created private network {net_name!r} (id: {network_id})")
         network = await wait_for_network(session, network_id)
@@ -255,7 +236,7 @@ async def create_network_for_co(
 
 
 async def list_workspaces_for_co(
-    co_name: str | None = None,
+    co_name: str,
     cloud_name: str = DEFAULT_CLOUD_NAME,
     by_owner: bool = False,
     catalog_item_name: str | None = None,
@@ -263,7 +244,7 @@ async def list_workspaces_for_co(
     dry_run: bool = False,
 ):
     async with aiohttp.ClientSession(headers=HEADERS) as session:
-        co = await resolve_co(session, co_name or CO_NAME)
+        co = await resolve_co(session, co_name)
         params = {
             "co_id": co["id"],
             "application_type": "Compute",
@@ -291,8 +272,8 @@ async def list_workspaces_for_co(
 
 
 async def list_application_offerings_for_co(
-    co_name: str | None = None,
-    wallet_name: str | None = None,
+    co_name: str,
+    wallet_name: str,
     cloud_name: str = DEFAULT_CLOUD_NAME,
     application_type: str | None = None,
     name: str | None = None,
@@ -300,8 +281,8 @@ async def list_application_offerings_for_co(
 ):
     async with aiohttp.ClientSession(headers=HEADERS) as session:
         co, wallet = await asyncio.gather(
-            resolve_co(session, co_name or CO_NAME),
-            resolve_wallet(session, wallet_name or WALLET_NAME),
+            resolve_co(session, co_name),
+            resolve_wallet(session, wallet_name),
         )
         products = wallet["budgets"][0]["products"]
         params = {"co": co["id"], "product": products}
@@ -342,75 +323,65 @@ async def delete_workspace_by_id(
 
 
 async def create_workspace(
-    co_name: str | None = None,
-    wallet_name: str | None = None,
-    cloud_name: str | None = None,
-    catalog_item_name: str | None = None,
-    workspace_name: str | None = None,
-    os_flavour_name: str | None = None,
+    co_name: str,
+    wallet_name: str,
+    cloud_name: str,
+    catalog_item_name: str,
+    workspace_name: str,
+    os_flavour_name: str,
     size_flavour_name: str | None = None,
     num_cpu: int | None = None,
     num_gpu: int | None = None,
     gpu_type: str | None = None,
-    description: str | None = None,
+    description: str = "",
+    end_time: str | None = None,
+    host_name: str | None = None,
+    network_name_hint: str | None = None,
+    storage_ids: list[str] | None = None,
+    network_ids: list[str] | None = None,
+    ip_ids: list[str] | None = None,
+    dataset_names: list[str] | None = None,
+    dataset_ids: list[str] | None = None,
     dry_run: bool = False,
     use_private_network: bool = False,
     optional_parameters: dict[str, str] | None = None,
 ):
-    """Create a ResearchCloud workspace using environment-backed defaults."""
+    """Create a ResearchCloud workspace using explicitly provided resource names."""
     size_selection_args = sum(x is not None for x in (size_flavour_name, num_cpu, num_gpu))
     if size_selection_args > 1:
         raise ValueError("Provide at most one of size_flavour_name, num_cpu, or num_gpu.")
+    if size_selection_args == 0:
+        raise ValueError("Provide one of size_flavour_name, num_cpu, or num_gpu.")
+    validate_config()
 
-    required = [
-        key for key in _REQUIRED
-        if key not in {"CO_NAME", "WALLET_NAME", "CATALOG_ITEM_NAME", "OS_FLAVOUR_NAME", "WORKSPACE_NAME"}
-    ]
-    if not co_name:
-        required.append("CO_NAME")
-    if not wallet_name:
-        required.append("WALLET_NAME")
-    if not catalog_item_name:
-        required.append("CATALOG_ITEM_NAME")
-    if not os_flavour_name:
-        required.append("OS_FLAVOUR_NAME")
-    if not workspace_name:
-        required.append("WORKSPACE_NAME")
-    if size_selection_args == 0 and "SIZE_FLAVOUR_NAME" not in required:
-        required.append("SIZE_FLAVOUR_NAME")
-    validate_config(required)
-
-    host_name = f"{HOST_NAME_BASE}_{_random_suffix()}"
-    selected_cloud_name = cloud_name or CLOUD_NAME
-    selected_catalog_item_name = catalog_item_name or CATALOG_ITEM_NAME
-    selected_os_flavour_name = os_flavour_name or OS_FLAVOUR_NAME
-    selected_workspace_description = WORKSPACE_DESCRIPTION if description is None else description
-    selected_workspace_end_time = resolve_workspace_end_time(WORKSPACE_END_TIME)
+    normalized_host_name = host_name.strip() if host_name else ""
+    selected_host_name = normalized_host_name or f"{DEFAULT_HOST_NAME_PREFIX}_{_random_suffix()}"
+    selected_workspace_end_time = resolve_workspace_end_time(end_time)
     validate_workspace_end_time(selected_workspace_end_time)
 
     async with aiohttp.ClientSession(headers=HEADERS) as session:
         print("\n── Resolving resources ─────────────────────────────────────")
 
         co, wallet = await asyncio.gather(
-            resolve_co(session, co_name or CO_NAME),
-            resolve_wallet(session, wallet_name or WALLET_NAME),
+            resolve_co(session, co_name),
+            resolve_wallet(session, wallet_name),
         )
         products = wallet["budgets"][0]["products"]
         print(f"  CO          : {co['co_name']}  (id: {co['id']})")
         print(f"  Wallet      : {wallet['name']}  (id: {wallet['id']})")
         print(f"  Products    : {products}")
 
-        catalog_item = await resolve_catalog_item(session, selected_catalog_item_name, co["co_id"], products)
+        catalog_item = await resolve_catalog_item(session, catalog_item_name, co["co_id"], products)
         print(f"  Catalog item: {catalog_item['name']}  (id: {catalog_item['id']})")
 
-        resolved_size_name = None if (num_cpu is not None or num_gpu is not None) else (size_flavour_name or SIZE_FLAVOUR_NAME)
+        resolved_size_name = None if (num_cpu is not None or num_gpu is not None) else size_flavour_name
         offering, size_flavour, os_flavour = await resolve_offering_and_flavours(
             session,
             catalog_item,
             co["co_id"],
             products,
-            selected_cloud_name,
-            selected_os_flavour_name,
+            cloud_name,
+            os_flavour_name,
             resolved_size_name,
         )
         if num_cpu is not None or num_gpu is not None:
@@ -423,14 +394,14 @@ async def create_workspace(
         print(f"  Cloud       : {offering['subscription']['name']}")
         print(f"  OS flavour  : {os_flavour['name']}")
         print(f"  Size flavour: {size_flavour['name']}")
-        print(f"  Host name   : {host_name}")
+        print(f"  Host name   : {selected_host_name}")
         if optional_parameters:
             print(f"  Optional parameters supplied: {sorted(optional_parameters.keys())}")
 
-        network_ids: list[str | dict] = list(NETWORK_IDS)
+        attached_network_ids: list[str | dict] = list(network_ids or [])
         if use_private_network:
             print("  Private network: looking for an existing one …")
-            existing_networks = await get_networks(session, co["id"], cloud_name=selected_cloud_name)
+            existing_networks = await get_networks(session, co["id"], cloud_name=cloud_name)
 
             if existing_networks:
                 network = existing_networks[0]
@@ -446,16 +417,16 @@ async def create_workspace(
                 network_ref = {"id": network_id, "name": network_id, "type": "network"}
                 print("  Private network: none found — a new one would be created (skipped for --dry-run).")
             else:
-                network_name = f"{HOST_NAME_BASE}-network-{_random_suffix()}"
+                network_name = f"{DEFAULT_HOST_NAME_PREFIX}-network-{_random_suffix()}"
                 print(f"  Private network: none found — creating {network_name!r} …")
                 network_id = await create_network(
                     session,
                     co,
                     wallet,
                     products,
-                    selected_cloud_name,
+                    cloud_name,
                     network_name,
-                    network_name_hint=NETWORK_NAME,
+                    network_name_hint=network_name_hint,
                 )
                 print(f"  Private network: created (id: {network_id}), waiting until available …")
                 network = await wait_for_network(session, network_id)
@@ -466,7 +437,7 @@ async def create_workspace(
                 }
                 print("  Private network: available.")
 
-            network_ids = [network_ref]
+            attached_network_ids = [network_ref]
 
         print("────────────────────────────────────────────────────────────\n")
 
@@ -477,15 +448,15 @@ async def create_workspace(
             offering=offering,
             os_flavour=os_flavour,
             size_flavour=size_flavour,
-            workspace_name=workspace_name or WORKSPACE_NAME,
-            workspace_description=selected_workspace_description,
+            workspace_name=workspace_name,
+            workspace_description=description,
             end_time=selected_workspace_end_time,
-            host_name=host_name,
-            storage_ids=STORAGE_IDS,
-            network_ids=network_ids,
-            ip_ids=IP_IDS,
-            dataset_names=DATASET_NAMES,
-            dataset_ids=DATASET_IDS,
+            host_name=selected_host_name,
+            storage_ids=storage_ids or [],
+            network_ids=attached_network_ids,
+            ip_ids=ip_ids or [],
+            dataset_names=dataset_names or [],
+            dataset_ids=dataset_ids or [],
             optional_parameters=optional_parameters,
         )
 
@@ -511,7 +482,7 @@ async def create_workspace(
             print("────────────────────────────────────────────────────────────")
             return
 
-        print(f"Creating workspace {workspace_name or WORKSPACE_NAME!r} …")
+        print(f"Creating workspace {workspace_name!r} …")
         status, response = await make_request(session, "POST", WORKSPACE_BASE_URL, "workspaces/", data=payload)
         if status != 201:
             print(f"\n✗ Workspace creation failed (HTTP {status})")
@@ -531,7 +502,7 @@ async def create_workspace(
             final_workspace = await wait_for_workspace(session, workspace_id)
         except (RuntimeError, TimeoutError) as exc:
             print(f"\n✗ Workspace was created but did not become ready: {exc}")
-            print("  Use 'get-workspaces --name <workspace-name>' to inspect current state.")
+            print("  Use 'get-workspaces --co <co-name> --name <workspace-name>' to inspect current state.")
             sys.exit(1)
 
     print("\n✓ Workspace is ready")
@@ -548,15 +519,63 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command")
 
     create_workspace_parser = subparsers.add_parser("create-workspace", help="Create a workspace.")
-    create_workspace_parser.add_argument("--co", help="CO name.")
-    create_workspace_parser.add_argument("--wallet", help="Wallet name.")
+    create_workspace_parser.add_argument("--co", required=True, help="CO name.")
+    create_workspace_parser.add_argument("--wallet", required=True, help="Wallet name.")
     create_workspace_parser.add_argument("--cloud", default=DEFAULT_CLOUD_NAME, help="Cloud subscription name.")
-    create_workspace_parser.add_argument("--name", help="Workspace name override.")
-    create_workspace_parser.add_argument("--os", dest="os_flavour_name", help="OS flavour name override.")
-    create_workspace_parser.add_argument("--description", help="Workspace description override.")
-    create_workspace_parser.add_argument("--catalog-item-name", help="Catalog item (application offering) name.")
+    create_workspace_parser.add_argument("--name", required=True, help="Workspace name.")
+    create_workspace_parser.add_argument("--os", dest="os_flavour_name", required=True, help="OS flavour name.")
+    create_workspace_parser.add_argument("--description", default="", help="Workspace description.")
+    create_workspace_parser.add_argument("--catalog-item-name", required=True, help="Catalog item (application offering) name.")
+    create_workspace_parser.add_argument(
+        "--end-time",
+        help="Workspace end time in ISO 8601 format (for example 2026-12-31T23:59:59Z).",
+    )
+    create_workspace_parser.add_argument(
+        "--host-name",
+        help="Host name for the workspace. Defaults to a generated value: ws_<random-suffix>.",
+    )
+    create_workspace_parser.add_argument(
+        "--network-name-hint",
+        help="Private-network catalog item name hint (optional).",
+    )
+    create_workspace_parser.add_argument(
+        "--storage-id",
+        action="append",
+        default=[],
+        help="Attach storage by ID. Can be passed multiple times.",
+    )
+    create_workspace_parser.add_argument(
+        "--network-id",
+        action="append",
+        default=[],
+        help="Attach network by ID. Can be passed multiple times.",
+    )
+    create_workspace_parser.add_argument(
+        "--ip-id",
+        action="append",
+        default=[],
+        help="Attach IP by ID. Can be passed multiple times.",
+    )
+    create_workspace_parser.add_argument(
+        "--dataset-name",
+        action="append",
+        default=[],
+        help="Attach dataset by name. Can be passed multiple times.",
+    )
+    create_workspace_parser.add_argument(
+        "--dataset-id",
+        action="append",
+        default=[],
+        help="Attach dataset by ID. Can be passed multiple times.",
+    )
     size_group = create_workspace_parser.add_mutually_exclusive_group()
-    size_group.add_argument("--size", dest="size_flavour_name", help="Exact size flavour name.")
+    size_group.required = True
+    size_group.add_argument(
+        "--size-flavour",
+        "--size",
+        dest="size_flavour_name",
+        help='Exact size flavour name (for example "1 CPU - himem").',
+    )
     size_group.add_argument(
         "--num-cpu",
         type=int,
@@ -597,7 +616,7 @@ def main() -> None:
     )
 
     get_networks_parser = subparsers.add_parser("get-networks", help="List private networks in a CO.")
-    get_networks_parser.add_argument("--co", help="CO name to inspect.")
+    get_networks_parser.add_argument("--co", required=True, help="CO name to inspect.")
     get_networks_parser.add_argument("--cloud", default=DEFAULT_CLOUD_NAME, help="Cloud subscription name filter.")
     get_networks_parser.add_argument(
         "--by-owner",
@@ -611,10 +630,19 @@ def main() -> None:
     )
 
     create_network_parser = subparsers.add_parser("create-network", help="Create a private network in a CO.")
-    create_network_parser.add_argument("--co", help="CO name.")
-    create_network_parser.add_argument("--wallet", help="Wallet name.")
+    create_network_parser.add_argument("--co", required=True, help="CO name.")
+    create_network_parser.add_argument("--wallet", required=True, help="Wallet name.")
     create_network_parser.add_argument("--cloud", default=DEFAULT_CLOUD_NAME, help="Cloud subscription name.")
     create_network_parser.add_argument("--name", help="Private network name to create.")
+    create_network_parser.add_argument(
+        "--network-name-hint",
+        help="Private-network catalog item name hint (optional).",
+    )
+    create_network_parser.add_argument(
+        "--host-name-base",
+        default="ws",
+        help="Prefix used for generated private network names when --name is not provided.",
+    )
     create_network_parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -630,7 +658,7 @@ def main() -> None:
     )
 
     get_workspaces_parser = subparsers.add_parser("get-workspaces", help="List workspaces in a CO.")
-    get_workspaces_parser.add_argument("--co", help="CO name to inspect.")
+    get_workspaces_parser.add_argument("--co", required=True, help="CO name to inspect.")
     get_workspaces_parser.add_argument("--cloud", default=DEFAULT_CLOUD_NAME, help="Cloud subscription name filter.")
     get_workspaces_parser.add_argument(
         "--by-owner",
@@ -652,8 +680,8 @@ def main() -> None:
         "get-application-offerings",
         help="List application offerings available to a CO.",
     )
-    get_offerings_parser.add_argument("--co", help="CO name.")
-    get_offerings_parser.add_argument("--wallet", help="Wallet name.")
+    get_offerings_parser.add_argument("--co", required=True, help="CO name.")
+    get_offerings_parser.add_argument("--wallet", required=True, help="Wallet name.")
     get_offerings_parser.add_argument("--cloud", default=DEFAULT_CLOUD_NAME, help="Cloud subscription name filter.")
     get_offerings_parser.add_argument(
         "--type",
@@ -668,6 +696,7 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+    validate_config()
 
     if args.command == "get-networks":
         asyncio.run(
@@ -685,6 +714,8 @@ def main() -> None:
                 wallet_name=args.wallet,
                 cloud_name=args.cloud,
                 network_name=args.name,
+                network_name_hint=args.network_name_hint,
+                host_name_base=args.host_name_base,
                 dry_run=args.dry_run,
             )
         )
@@ -736,6 +767,14 @@ def main() -> None:
                 num_gpu=args.num_gpu,
                 gpu_type=args.gpu_type,
                 description=args.description,
+                end_time=args.end_time,
+                host_name=args.host_name,
+                network_name_hint=args.network_name_hint,
+                storage_ids=args.storage_id,
+                network_ids=args.network_id,
+                ip_ids=args.ip_id,
+                dataset_names=args.dataset_name,
+                dataset_ids=args.dataset_id,
                 dry_run=args.dry_run,
                 use_private_network=args.private_network,
                 optional_parameters=optional_parameters,

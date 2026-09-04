@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Configuration (all values come from workspace.py / .env)
+# Configuration (shared defaults from .env)
 # ---------------------------------------------------------------------------
 from env import (
     CATALOG_BASE_URL,
@@ -406,7 +406,7 @@ async def resolve_catalog_item(
     if not matches:
         raise ValueError(
             f"No catalog item (Application Offering) found with name: {catalog_item_name!r}. "
-            "Check CO_NAME, WALLET_NAME and CATALOG_ITEM_NAME."
+            "Check the provided CO, wallet product scope, and catalog item name."
         )
     if len(matches) > 1:
         logger.warning("Multiple catalog items match %r — using the first one.", catalog_item_name)
@@ -881,7 +881,6 @@ async def wait_for_workspace(
 
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
-
 
 
 
