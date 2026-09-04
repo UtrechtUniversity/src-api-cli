@@ -122,6 +122,28 @@ def test_client_requires_token_when_creating_owned_session():
         _run(client._ensure_session())
 
 
+def test_resolve_co_uses_client_directly():
+    session = DummySession([
+        DummyResponse(200, {"COs": [{"id": "co-1", "co_name": "Example CO"}]}),
+    ])
+    client = ResearchCloudClient(token="token", session=session)
+
+    result = _run(client.resolve_co("Example CO"))
+
+    assert result == {"id": "co-1", "co_name": "Example CO"}
+    assert session.calls[0]["url"].endswith("/users/self/")
+
+
+def test_expected_optional_parameter_keys_support_mapping_shape():
+    client = ResearchCloudClient(token="token", session=DummySession())
+
+    result = client.get_expected_optional_parameter_keys(
+        {"optional_parameters": {"username": {}, "password": {}}}
+    )
+
+    assert result == ("username", "password")
+
+
 def test_workspace_list_filters_multiple_statuses_client_side():
     session = DummySession([
         DummyResponse(
