@@ -39,13 +39,11 @@ from researchcloud.api import (
 )
 from researchcloud.builders import build_create_network_payload, build_create_payload
 from researchcloud.client import ResearchCloudClient
-from researchcloud.config import ResearchCloudConfig
 
 __all__ = [
     "CATALOG_BASE_URL",
     "DEFAULT_CLOUD_NAME",
     "ResearchCloudClient",
-    "ResearchCloudConfig",
     "USER_BASE_URL",
     "WALLET_BASE_URL",
     "WORKSPACE_BASE_URL",

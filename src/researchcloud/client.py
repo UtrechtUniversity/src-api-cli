@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import logging
+import os
+from collections.abc import Mapping
 from urllib.parse import urljoin
 
 import aiohttp
 
-from researchcloud.config import ResearchCloudConfig
+from researchcloud.config import (
+    DEFAULT_CATALOG_BASE_URL,
+    DEFAULT_USER_BASE_URL,
+    DEFAULT_WALLET_BASE_URL,
+    DEFAULT_WORKSPACE_BASE_URL,
+)
 from researchcloud.errors import ApiError, TransportError
 from researchcloud.services import CatalogService, UsersService, WalletsService, WorkspacesService
 
@@ -17,11 +24,18 @@ class ResearchCloudClient:
     def __init__(
         self,
         *,
-        config: ResearchCloudConfig | None = None,
         token: str | None = None,
+        catalog_base_url: str = DEFAULT_CATALOG_BASE_URL,
+        user_base_url: str = DEFAULT_USER_BASE_URL,
+        wallet_base_url: str = DEFAULT_WALLET_BASE_URL,
+        workspace_base_url: str = DEFAULT_WORKSPACE_BASE_URL,
         session: aiohttp.ClientSession | object | None = None,
     ):
-        self.config = config or ResearchCloudConfig(token=token)
+        self.token = token
+        self.catalog_base_url = catalog_base_url
+        self.user_base_url = user_base_url
+        self.wallet_base_url = wallet_base_url
+        self.workspace_base_url = workspace_base_url
         self._session = session
         self._owns_session = False
         self.catalog = CatalogService(self)
@@ -30,8 +44,21 @@ class ResearchCloudClient:
         self.workspaces = WorkspacesService(self)
 
     @classmethod
-    def from_env(cls, *, session: aiohttp.ClientSession | object | None = None) -> ResearchCloudClient:
-        return cls(config=ResearchCloudConfig.from_env(), session=session)
+    def from_env(
+        cls,
+        *,
+        env: Mapping[str, str] | None = None,
+        session: aiohttp.ClientSession | object | None = None,
+    ) -> ResearchCloudClient:
+        source = os.environ if env is None else env
+        return cls(
+            token=source.get("RESEARCH_CLOUD_TOKEN"),
+            catalog_base_url=source.get("CATALOG_BASE_URL", DEFAULT_CATALOG_BASE_URL),
+            user_base_url=source.get("USER_BASE_URL", DEFAULT_USER_BASE_URL),
+            wallet_base_url=source.get("WALLET_BASE_URL", DEFAULT_WALLET_BASE_URL),
+            workspace_base_url=source.get("WORKSPACE_BASE_URL", DEFAULT_WORKSPACE_BASE_URL),
+            session=session,
+        )
 
     async def __aenter__(self) -> ResearchCloudClient:
         await self._ensure_session()
@@ -46,9 +73,33 @@ class ResearchCloudClient:
             self._session = None
             self._owns_session = False
 
+    def _require_token(self) -> str:
+        if not self.token:
+            raise ValueError("RESEARCH_CLOUD_TOKEN is required.")
+        return self.token
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "authorization": self._require_token(),
+            "accept": "application/json",
+            "content-type": "application/json",
+        }
+
+    def base_url_for(self, service: str) -> str:
+        mapping = {
+            "catalog": self.catalog_base_url,
+            "user": self.user_base_url,
+            "wallet": self.wallet_base_url,
+            "workspace": self.workspace_base_url,
+        }
+        try:
+            return mapping[service]
+        except KeyError as exc:
+            raise ValueError(f"Unknown ResearchCloud service {service!r}.") from exc
+
     async def _ensure_session(self):
         if self._session is None:
-            self._session = aiohttp.ClientSession(headers=self.config.headers())
+            self._session = aiohttp.ClientSession(headers=self._headers())
             self._owns_session = True
         return self._session
 
@@ -61,7 +112,7 @@ class ResearchCloudClient:
         data=None,
     ):
         session = await self._ensure_session()
-        url = urljoin(self.config.base_url_for(service), path)
+        url = urljoin(self.base_url_for(service), path)
         logger.info("%-6s %s  params=%s", method, url, params)
 
         try:

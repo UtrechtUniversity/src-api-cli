@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import random
 import string
 import sys
@@ -24,7 +25,6 @@ from researchcloud.api import (
     to_network_cloud_name,
 )
 from researchcloud.client import ResearchCloudClient
-from researchcloud.config import ResearchCloudConfig
 from researchcloud.utils.flavours import match_size_flavour
 from researchcloud.builders import build_create_payload
 
@@ -103,8 +103,7 @@ def parse_optional_parameters(
 
 
 def validate_config(required: list[str] | None = None) -> None:
-    config = ResearchCloudConfig.from_env()
-    available = {"RESEARCH_CLOUD_TOKEN": config.token}
+    available = {"RESEARCH_CLOUD_TOKEN": os.getenv("RESEARCH_CLOUD_TOKEN")}
     keys = required or list(available.keys())
     missing = [key for key in keys if not available.get(key)]
     if missing:
