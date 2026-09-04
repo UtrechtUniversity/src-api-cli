@@ -1,4 +1,5 @@
-A simple API client for SURF ResearchCloud.
+A simple Python SDK and CLI for SURF ResearchCloud.
 
-Use [cli.py](/Users/3060845/Code/uu/src/api_explorations/cli.py) for command-line entrypoints and
-[api.py](/Users/3060845/Code/uu/src/api_explorations/api.py) for reusable API helpers.
+- Import the package from [src/researchcloud/](/Users/3060845/Code/uu/src/api_explorations/src/researchcloud).
+- Use [cli.py](/Users/3060845/Code/uu/src/api_explorations/cli.py) as the local CLI entrypoint.
+- Install as a package via [pyproject.toml](/Users/3060845/Code/uu/src/api_explorations/pyproject.toml).
