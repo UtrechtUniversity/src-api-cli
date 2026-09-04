@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 import aiohttp
 import pytest
@@ -66,6 +67,20 @@ def test_request_returns_json_body():
     }]
 
 
+def test_request_uses_client_base_url_overrides():
+    session = DummySession([DummyResponse(200, {"ok": True})])
+    client = ResearchCloudClient(
+        token="token",
+        workspace_base_url="https://workspace.example/api/",
+        session=session,
+    )
+
+    result = _run(client.request("GET", "workspace", "workspaces/"))
+
+    assert result == {"ok": True}
+    assert session.calls[0]["url"] == "https://workspace.example/api/workspaces/"
+
+
 def test_request_returns_text_body():
     session = DummySession([DummyResponse(204, "", content_type="text/plain")])
     client = ResearchCloudClient(token="token", session=session)
@@ -89,6 +104,23 @@ def test_request_raises_transport_error_for_client_failure():
 
     with pytest.raises(TransportError, match="boom"):
         _run(client.request("GET", "workspace", "workspaces/"))
+
+
+def test_from_env_reads_client_configuration(monkeypatch):
+    monkeypatch.setenv("RESEARCH_CLOUD_TOKEN", "env-token")
+    monkeypatch.setenv("WORKSPACE_BASE_URL", "https://workspace.example/api/")
+
+    client = ResearchCloudClient.from_env(session=DummySession())
+
+    assert client.token == "env-token"
+    assert client.workspace_base_url == "https://workspace.example/api/"
+
+
+def test_client_requires_token_when_creating_owned_session():
+    client = ResearchCloudClient()
+
+    with pytest.raises(ValueError, match="RESEARCH_CLOUD_TOKEN is required"):
+        _run(client._ensure_session())
 
 
 def test_workspace_list_filters_multiple_statuses_client_side():
