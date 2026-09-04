@@ -13,18 +13,8 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
-from researchcloud.api import (
-    DEFAULT_CLOUD_NAME,
-    create_network,
-    get_expected_optional_parameter_keys,
-    resolve_catalog_item,
-    resolve_co,
-    resolve_network_and_offering,
-    resolve_offering_and_flavours,
-    resolve_wallet,
-    to_network_cloud_name,
-)
 from researchcloud.client import ResearchCloudClient
+from researchcloud.config import DEFAULT_CLOUD_NAME
 from researchcloud.utils.flavours import match_size_flavour
 from researchcloud.builders import build_create_payload
 
@@ -149,7 +139,7 @@ async def list_networks_for_co(
     dry_run: bool = False,
 ) -> None:
     async with ResearchCloudClient.from_env() as client:
-        co = await resolve_co(client, co_name)
+        co = await client.resolve_co(co_name)
         if dry_run:
             print(f"Dry run: would list private networks for CO {co['co_name']!r}  (id: {co['id']})")
             print(
@@ -157,7 +147,7 @@ async def list_networks_for_co(
                 f"'deleted': 'false', 'by_owner': {str(by_owner).lower()}}}"
             )
             print(f"  cloud filter: {cloud_name!r}")
-            print(f"  network cloud filter: {to_network_cloud_name(cloud_name)!r}")
+            print(f"  network cloud filter: {client.to_network_cloud_name(cloud_name)!r}")
             return
         networks = await client.workspaces.list_networks(co["id"], cloud_name=cloud_name, by_owner=by_owner)
         pretty(networks)
@@ -173,18 +163,17 @@ async def create_network_for_co(
     dry_run: bool = False,
 ) -> None:
     async with ResearchCloudClient.from_env() as client:
-        co, wallet = await asyncio.gather(resolve_co(client, co_name), resolve_wallet(client, wallet_name))
+        co, wallet = await asyncio.gather(client.resolve_co(co_name), client.resolve_wallet(wallet_name))
         if dry_run:
             print(f"Dry run: would create private network in CO {co['co_name']!r} using wallet {wallet['name']!r}")
             print(f"  network_name: {network_name or f'{host_name_base}-network-{_random_suffix()}'}")
             print(f"  cloud_name: {cloud_name}")
-            print(f"  network_cloud_name: {to_network_cloud_name(cloud_name)}")
+            print(f"  network_cloud_name: {client.to_network_cloud_name(cloud_name)}")
             return
 
         selected_network_name = network_name or f"{host_name_base}-network-{_random_suffix()}"
         products = wallet["budgets"][0]["products"]
-        network_id = await create_network(
-            client,
+        network_id = await client.create_network(
             co,
             wallet,
             products,
@@ -207,7 +196,7 @@ async def list_workspaces_for_co(
     dry_run: bool = False,
 ) -> None:
     async with ResearchCloudClient.from_env() as client:
-        co = await resolve_co(client, co_name)
+        co = await client.resolve_co(co_name)
         params = {
             "co_id": co["id"],
             "application_type": "Compute",
@@ -247,7 +236,7 @@ async def list_application_offerings_for_co(
     dry_run: bool = False,
 ) -> None:
     async with ResearchCloudClient.from_env() as client:
-        co, wallet = await asyncio.gather(resolve_co(client, co_name), resolve_wallet(client, wallet_name))
+        co, wallet = await asyncio.gather(client.resolve_co(co_name), client.resolve_wallet(wallet_name))
         products = wallet["budgets"][0]["products"]
         params = {"co": co["id"], "product": products}
         if application_type:
@@ -320,18 +309,17 @@ async def create_workspace(
 
     async with ResearchCloudClient.from_env() as client:
         print("\n── Resolving resources ─────────────────────────────────────")
-        co, wallet = await asyncio.gather(resolve_co(client, co_name), resolve_wallet(client, wallet_name))
+        co, wallet = await asyncio.gather(client.resolve_co(co_name), client.resolve_wallet(wallet_name))
         products = wallet["budgets"][0]["products"]
         print(f"  CO          : {co['co_name']}  (id: {co['id']})")
         print(f"  Wallet      : {wallet['name']}  (id: {wallet['id']})")
         print(f"  Products    : {products}")
 
-        catalog_item = await resolve_catalog_item(client, catalog_item_name, co["id"], products)
+        catalog_item = await client.resolve_catalog_item(catalog_item_name, co["id"], products)
         print(f"  Catalog item: {catalog_item['name']}  (id: {catalog_item['id']})")
 
         resolved_size_name = None if (num_cpu is not None or num_gpu is not None) else size_flavour_name
-        offering, size_flavour, os_flavour = await resolve_offering_and_flavours(
-            client,
+        offering, size_flavour, os_flavour = await client.resolve_offering_and_flavours(
             catalog_item,
             co["id"],
             products,
@@ -375,8 +363,7 @@ async def create_workspace(
             else:
                 network_name = f"{DEFAULT_HOST_NAME_PREFIX}-network-{_random_suffix()}"
                 print(f"  Private network: none found — creating {network_name!r} …")
-                network_id = await create_network(
-                    client,
+                network_id = await client.create_network(
                     co,
                     wallet,
                     products,
@@ -415,7 +402,7 @@ async def create_workspace(
         )
 
         if optional_parameters:
-            expected_optional_parameter_keys = get_expected_optional_parameter_keys(offering)
+            expected_optional_parameter_keys = client.get_expected_optional_parameter_keys(offering)
             if expected_optional_parameter_keys:
                 unexpected = sorted(
                     key for key in optional_parameters if key not in expected_optional_parameter_keys
