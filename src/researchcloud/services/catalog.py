@@ -21,13 +21,12 @@ class CatalogService:
         params = {"co": co_id, "product": products}
         if application_type:
             params["type"] = application_type
-        response = await self._client.request(
+        items = await self._client._paginate(
             "GET",
             "catalog",
             "catalog_items/offerings/",
             params=params,
         )
-        items = response.get("results", [])
         if name:
             return [item for item in items if item["name"] == name]
         return items
@@ -39,5 +38,4 @@ class CatalogService:
         products: list,
     ) -> list:
         path = f"catalog_items/{quote_plus(catalog_item_id)}/offerings/"
-        response = await self._client.request("GET", "catalog", path, params={"co": co_id, "product": products})
-        return response.get("results", [])
+        return await self._client._paginate("GET", "catalog", path, params={"co": co_id, "product": products})

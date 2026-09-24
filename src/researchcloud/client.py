@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import random
 from collections.abc import Mapping, Sequence
 from urllib.parse import urljoin
 
@@ -19,6 +21,12 @@ from researchcloud.services import CatalogService, UsersService, WalletsService,
 
 logger = logging.getLogger(__name__)
 
+# HTTP statuses considered transient and worth retrying: 429 (rate limited) and 5xx (server errors).
+RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_BACKOFF_BASE_SECONDS = 0.5
+DEFAULT_BACKOFF_MAX_SECONDS = 8.0
+
 
 class ResearchCloudClient:
     def __init__(
@@ -30,6 +38,9 @@ class ResearchCloudClient:
         wallet_base_url: str = DEFAULT_WALLET_BASE_URL,
         workspace_base_url: str = DEFAULT_WORKSPACE_BASE_URL,
         session: aiohttp.ClientSession | object | None = None,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        backoff_base_seconds: float = DEFAULT_BACKOFF_BASE_SECONDS,
+        backoff_max_seconds: float = DEFAULT_BACKOFF_MAX_SECONDS,
     ):
         self.token = token
         self.catalog_base_url = catalog_base_url
@@ -38,6 +49,9 @@ class ResearchCloudClient:
         self.workspace_base_url = workspace_base_url
         self._session = session
         self._owns_session = False
+        self.max_retries = max_retries
+        self.backoff_base_seconds = backoff_base_seconds
+        self.backoff_max_seconds = backoff_max_seconds
         self.catalog = CatalogService(self)
         self.users = UsersService(self)
         self.wallets = WalletsService(self)
@@ -129,6 +143,17 @@ class ResearchCloudClient:
             self._owns_session = True
         return self._session
 
+    def _compute_backoff_delay(self, attempt: int, retry_after: str | None) -> float:
+        """Compute the delay before the next retry, honoring a Retry-After header if present."""
+        if retry_after is not None:
+            try:
+                return max(0.0, float(retry_after))
+            except ValueError:
+                pass  # Ignore unparsable (e.g. HTTP-date) Retry-After values and fall back below.
+        exponential_delay = self.backoff_base_seconds * (2**attempt)
+        capped_delay = min(exponential_delay, self.backoff_max_seconds)
+        return capped_delay + random.uniform(0, self.backoff_base_seconds)
+
     async def request(
         self,
         method: str,
@@ -139,17 +164,66 @@ class ResearchCloudClient:
     ):
         session = await self._ensure_session()
         url = urljoin(self.base_url_for(service), path)
-        logger.info("%-6s %s  params=%s", method, url, params)
 
-        try:
-            async with session.request(method, url, params=params, json=data) as response:
-                content_type = response.headers.get("Content-Type", "")
-                body = await response.json() if "application/json" in content_type else await response.text()
-                if not response.ok:
+        attempt = 0
+        while True:
+            logger.info("%-6s %s  params=%s", method, url, params)
+            try:
+                async with session.request(method, url, params=params, json=data) as response:
+                    content_type = response.headers.get("Content-Type", "")
+                    body = (
+                        await response.json() if "application/json" in content_type else await response.text()
+                    )
+                    if response.ok:
+                        return body
+                    if response.status in RETRYABLE_STATUS_CODES and attempt < self.max_retries:
+                        delay = self._compute_backoff_delay(attempt, response.headers.get("Retry-After"))
+                        attempt += 1
+                        logger.warning(
+                            "%-6s %s  transient HTTP %s, retrying in %.2fs (attempt %d/%d)",
+                            method,
+                            url,
+                            response.status,
+                            delay,
+                            attempt,
+                            self.max_retries,
+                        )
+                        await asyncio.sleep(delay)
+                        continue
                     raise ApiError(response.status, url, body)
-                return body
-        except aiohttp.ClientError as exc:
-            raise TransportError(url, exc) from exc
+            except aiohttp.ClientError as exc:
+                raise TransportError(url, exc) from exc
+
+    async def _paginate(
+        self,
+        method: str,
+        service: str,
+        path: str = "",
+        params: Mapping[str, object] | None = None,
+        *,
+        page_size: int = 100,
+        results_key: str = "results",
+        next_key: str = "next",
+    ) -> list:
+        """Fetch every page of a limit/offset-paginated list endpoint and return the combined results.
+
+        Used by all list-style service methods so pagination handling (offset advancement and
+        "next" detection) lives in one place rather than being duplicated per service.
+        """
+        base_params: dict[str, object] = dict(params or {})
+        base_params.setdefault("limit", page_size)
+        offset = int(base_params.get("offset", 0))
+
+        items: list = []
+        while True:
+            page_params = {**base_params, "offset": offset}
+            response = await self.request(method, service, path, params=page_params)
+            page = response.get(results_key, [])
+            items.extend(page)
+            if not page or response.get(next_key) is None:
+                break
+            offset += len(page)
+        return items
 
     async def resolve_wallet(self, wallet_name: str) -> dict:
         matches = await self.wallets.list(wallet_name)

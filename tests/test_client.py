@@ -11,10 +11,10 @@ from researchcloud.errors import ApiError, TransportError
 
 
 class DummyResponse:
-    def __init__(self, status: int, body, content_type: str = "application/json"):
+    def __init__(self, status: int, body, content_type: str = "application/json", headers: dict | None = None):
         self.status = status
         self._body = body
-        self.headers = {"Content-Type": content_type}
+        self.headers = {"Content-Type": content_type, **(headers or {})}
         self.ok = 200 <= status < 300
 
     async def json(self):
@@ -251,3 +251,100 @@ def test_workspace_list_filters_nested_attributes():
     )
 
     assert [workspace["id"] for workspace in result] == ["ws-1"]
+
+
+def test_request_retries_on_429_then_succeeds(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr(asyncio, "sleep", _record_sleep(sleeps))
+
+    session = DummySession([
+        DummyResponse(429, {"detail": "rate limited"}, headers={"Retry-After": "0.01"}),
+        DummyResponse(200, {"ok": True}),
+    ])
+    client = ResearchCloudClient(token="token", session=session)
+
+    result = _run(client.request("GET", "workspace", "workspaces/"))
+
+    assert result == {"ok": True}
+    assert len(session.calls) == 2
+    assert sleeps == [0.01]
+
+
+def test_request_retries_on_5xx_with_exponential_backoff(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr(asyncio, "sleep", _record_sleep(sleeps))
+    monkeypatch.setattr("researchcloud.client.random.uniform", lambda a, b: 0.0)
+
+    session = DummySession([
+        DummyResponse(503, "service unavailable", content_type="text/plain"),
+        DummyResponse(502, "bad gateway", content_type="text/plain"),
+        DummyResponse(200, {"ok": True}),
+    ])
+    client = ResearchCloudClient(token="token", session=session, backoff_base_seconds=1.0, backoff_max_seconds=10.0)
+
+    result = _run(client.request("GET", "workspace", "workspaces/"))
+
+    assert result == {"ok": True}
+    assert len(session.calls) == 3
+    assert sleeps == [1.0, 2.0]
+
+
+def test_request_raises_api_error_after_exhausting_retries(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr(asyncio, "sleep", _record_sleep(sleeps))
+
+    session = DummySession([DummyResponse(503, "down", content_type="text/plain") for _ in range(4)])
+    client = ResearchCloudClient(token="token", session=session, max_retries=3)
+
+    with pytest.raises(ApiError, match="HTTP 503"):
+        _run(client.request("GET", "workspace", "workspaces/"))
+
+    assert len(session.calls) == 4
+    assert len(sleeps) == 3
+
+
+def test_request_does_not_retry_non_transient_client_errors(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr(asyncio, "sleep", _record_sleep(sleeps))
+
+    session = DummySession([DummyResponse(404, {"message": "not found"})])
+    client = ResearchCloudClient(token="token", session=session)
+
+    with pytest.raises(ApiError, match="HTTP 404"):
+        _run(client.request("GET", "workspace", "workspaces/ws-1/"))
+
+    assert len(session.calls) == 1
+    assert sleeps == []
+
+
+def _record_sleep(sleeps: list[float]):
+    async def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    return fake_sleep
+
+
+def test_paginate_collects_all_pages_and_advances_offset():
+    session = DummySession([
+        DummyResponse(200, {"results": [{"id": "a"}, {"id": "b"}], "next": "?offset=2&limit=2"}),
+        DummyResponse(200, {"results": [{"id": "c"}], "next": None}),
+    ])
+    client = ResearchCloudClient(token="token", session=session)
+
+    result = _run(client._paginate("GET", "workspace", "workspaces/", params={"co_id": "co-1"}, page_size=2))
+
+    assert [item["id"] for item in result] == ["a", "b", "c"]
+    assert session.calls[0]["params"] == {"co_id": "co-1", "limit": 2, "offset": 0}
+    assert session.calls[1]["params"] == {"co_id": "co-1", "limit": 2, "offset": 2}
+
+
+def test_paginate_stops_on_empty_page_even_if_next_is_set():
+    session = DummySession([
+        DummyResponse(200, {"results": [], "next": "?offset=0&limit=100"}),
+    ])
+    client = ResearchCloudClient(token="token", session=session)
+
+    result = _run(client._paginate("GET", "workspace", "workspaces/"))
+
+    assert result == []
+    assert len(session.calls) == 1

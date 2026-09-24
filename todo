@@ -1,7 +1,0 @@
-get_workspaces: filter by status
-get_workspaces: filter by arbitrary attribute (e.g. optional params)
-
-wallet usage/cost tracking: add usage-allowed, wallet consumption, wallet usage, and usage/budget/{budget_id} endpoints to WalletsService (see SRC wallet-server API.yaml)
-workspace logs and actions discovery: add WorkspacesService.get_logs (GET workspaces/{id}/logs/) and get_actions (GET workspaces/{id}/actions/) to inspect provisioning/error logs and see which actions are currently valid before triggering them
-client reliability: add retry-with-backoff (stdlib only) for transient failures (HTTP 429/5xx) in ResearchCloudClient.request, and a shared _paginate() helper so all list endpoints (not just WorkspacesService.list) handle paginated "next" responses correctly
-authentication/token story: decide how tokens are obtained/refreshed instead of only reading a static RESEARCH_CLOUD_TOKEN from env (e.g. via users/tokens/ endpoint), since the client has no way to refresh an expiring token mid-session

@@ -74,16 +74,7 @@ class WorkspacesService:
         if len(normalized_statuses) == 1:
             params["status"] = normalized_statuses[0]
 
-        workspaces: list[dict] = []
-        offset = 0
-        while True:
-            params["offset"] = offset
-            response = await self._client.request("GET", "workspace", "workspaces/", params=params)
-            page = response.get("results", [])
-            workspaces.extend(page)
-            if response.get("next") is None:
-                break
-            offset += len(page)
+        workspaces = await self._client._paginate("GET", "workspace", "workspaces/", params=params)
 
         if catalog_item_name:
             result = [
