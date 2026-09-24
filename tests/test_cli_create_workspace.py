@@ -95,3 +95,75 @@ def test_main_exits_when_token_missing(monkeypatch):
 
     with pytest.raises(SystemExit):
         cli.main()
+
+
+class _FakeWorkspaceLifecycleClient:
+    def __init__(self):
+        self.workspaces = AsyncMock()
+        self.workspaces.get = AsyncMock(return_value={"id": "ws-1", "status": "running"})
+        self.workspaces.pause = AsyncMock(return_value={"id": "ws-1", "status": "pausing"})
+        self.workspaces.resume = AsyncMock(return_value={"id": "ws-1", "status": "resuming"})
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+def test_get_workspace_status_prints_status(monkeypatch, capsys):
+    fake_client = _FakeWorkspaceLifecycleClient()
+    monkeypatch.setenv("RESEARCH_CLOUD_TOKEN", "token")
+
+    with patch.object(cli.ResearchCloudClient, "from_env", return_value=fake_client):
+        _run(cli.get_workspace_status(workspace_id="ws-1"))
+
+    fake_client.workspaces.get.assert_awaited_once_with("ws-1")
+    assert capsys.readouterr().out.strip() == "running"
+
+
+def test_get_workspace_status_dry_run_skips_request(monkeypatch, capsys):
+    fake_client = _FakeWorkspaceLifecycleClient()
+    monkeypatch.setenv("RESEARCH_CLOUD_TOKEN", "token")
+
+    with patch.object(cli.ResearchCloudClient, "from_env", return_value=fake_client):
+        _run(cli.get_workspace_status(workspace_id="ws-1", dry_run=True))
+
+    fake_client.workspaces.get.assert_not_awaited()
+    assert "ws-1" in capsys.readouterr().out
+
+
+def test_pause_workspace_by_id_calls_pause(monkeypatch, capsys):
+    fake_client = _FakeWorkspaceLifecycleClient()
+    monkeypatch.setenv("RESEARCH_CLOUD_TOKEN", "token")
+
+    with patch.object(cli.ResearchCloudClient, "from_env", return_value=fake_client):
+        _run(cli.pause_workspace_by_id(workspace_id="ws-1"))
+
+    fake_client.workspaces.pause.assert_awaited_once_with("ws-1")
+    assert "Paused workspace 'ws-1'" in capsys.readouterr().out
+
+
+def test_resume_workspace_by_id_calls_resume(monkeypatch, capsys):
+    fake_client = _FakeWorkspaceLifecycleClient()
+    monkeypatch.setenv("RESEARCH_CLOUD_TOKEN", "token")
+
+    with patch.object(cli.ResearchCloudClient, "from_env", return_value=fake_client):
+        _run(cli.resume_workspace_by_id(workspace_id="ws-1"))
+
+    fake_client.workspaces.resume.assert_awaited_once_with("ws-1")
+    assert "Resumed workspace 'ws-1'" in capsys.readouterr().out
+
+
+def test_build_parser_dispatches_lifecycle_commands():
+    parser = cli.build_parser()
+
+    status_args = parser.parse_args(["get-workspace-status", "--id", "ws-1"])
+    assert status_args.handler is cli.get_workspace_status
+    assert status_args.workspace_id == "ws-1"
+
+    pause_args = parser.parse_args(["pause-workspace", "--id", "ws-1"])
+    assert pause_args.handler is cli.pause_workspace_by_id
+
+    resume_args = parser.parse_args(["resume-workspace", "--id", "ws-1"])
+    assert resume_args.handler is cli.resume_workspace_by_id

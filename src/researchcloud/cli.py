@@ -231,6 +231,38 @@ async def delete_workspace_by_id(workspace_id: str, dry_run: bool = False) -> No
         print(f"Deleted workspace {workspace_id!r}")
 
 
+async def get_workspace_status(workspace_id: str, dry_run: bool = False) -> None:
+    async with ResearchCloudClient.from_env() as client:
+        if dry_run:
+            print(f"Dry run: would fetch status for workspace {workspace_id!r}")
+            print(f"  path: workspaces/{workspace_id}/")
+            return
+        workspace = await client.workspaces.get(workspace_id)
+        print(workspace.get("status"))
+
+
+async def pause_workspace_by_id(workspace_id: str, dry_run: bool = False) -> None:
+    async with ResearchCloudClient.from_env() as client:
+        if dry_run:
+            print(f"Dry run: would pause workspace {workspace_id!r}")
+            print(f"  path: workspaces/{workspace_id}/actions/pause/")
+            return
+        response = await client.workspaces.pause(workspace_id)
+        print(f"Paused workspace {workspace_id!r}")
+        pretty(response)
+
+
+async def resume_workspace_by_id(workspace_id: str, dry_run: bool = False) -> None:
+    async with ResearchCloudClient.from_env() as client:
+        if dry_run:
+            print(f"Dry run: would resume workspace {workspace_id!r}")
+            print(f"  path: workspaces/{workspace_id}/actions/resume/")
+            return
+        response = await client.workspaces.resume(workspace_id)
+        print(f"Resumed workspace {workspace_id!r}")
+        pretty(response)
+
+
 async def create_workspace(
     co_name: str,
     wallet_name: str,
@@ -425,6 +457,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     delete_workspace_parser.add_argument("--id", dest="workspace_id", required=True)
 
+    get_workspace_status_parser = subparsers.add_parser(
+        "get-workspace-status",
+        help="Quickly print the status of a workspace by ID.",
+        parents=[common_options],
+    )
+    get_workspace_status_parser.add_argument("--id", dest="workspace_id", required=True)
+
+    pause_workspace_parser = subparsers.add_parser(
+        "pause-workspace",
+        help="Pause a workspace by ID.",
+        parents=[common_options],
+    )
+    pause_workspace_parser.add_argument("--id", dest="workspace_id", required=True)
+
+    resume_workspace_parser = subparsers.add_parser(
+        "resume-workspace",
+        help="Resume a workspace by ID.",
+        parents=[common_options],
+    )
+    resume_workspace_parser.add_argument("--id", dest="workspace_id", required=True)
+
     get_workspaces_parser = subparsers.add_parser(
         "get-workspaces",
         help="List workspaces in a CO.",
@@ -448,6 +501,9 @@ def build_parser() -> argparse.ArgumentParser:
     get_networks_parser.set_defaults(handler=list_networks_for_co)
     create_network_parser.set_defaults(handler=create_network_for_co)
     delete_workspace_parser.set_defaults(handler=delete_workspace_by_id)
+    get_workspace_status_parser.set_defaults(handler=get_workspace_status)
+    pause_workspace_parser.set_defaults(handler=pause_workspace_by_id)
+    resume_workspace_parser.set_defaults(handler=resume_workspace_by_id)
     get_workspaces_parser.set_defaults(handler=list_workspaces_for_co)
     get_offerings_parser.set_defaults(handler=list_application_offerings_for_co)
     create_workspace_parser.set_defaults(handler=create_workspace)

@@ -8,3 +8,7 @@ A simple Python SDK and CLI for SURF ResearchCloud.
 For `get-application-offerings`, omitting `--type` means that all application
 types are included. Use `--type` when you want to restrict the results to one
 application type.
+
+Use `get-workspace-status --id <id>` to quickly print a workspace's current
+status, and `pause-workspace --id <id>` / `resume-workspace --id <id>` to
+pause or resume a workspace. All three support `--dry-run`.
