@@ -6,7 +6,7 @@ A simple Python SDK and CLI for SURF ResearchCloud.
 - Run the linter with `.venv/bin/ruff check .`.
 
 For `get-application-offerings`, omitting `--type` means that all application
-types are included. Use `--type` when you want to restrict the results to one
+types (workspace, network, ...) are included. Use `--type` when you want to restrict the results to one
 application type.
 
 Use `get-workspace-status --id <id>` to quickly print a workspace's current
