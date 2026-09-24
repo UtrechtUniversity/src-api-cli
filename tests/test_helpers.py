@@ -6,7 +6,7 @@ import logging
 import pytest
 
 from researchcloud.builders import build_create_payload
-from researchcloud.cli import resolve_workspace_end_time, validate_workspace_end_time
+from researchcloud.utils.end_time import resolve_workspace_end_time, validate_workspace_end_time
 from researchcloud.services.workspaces import (
     _is_workspace_failure_status,
     _is_workspace_ready_status,

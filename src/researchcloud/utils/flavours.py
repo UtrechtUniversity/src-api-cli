@@ -36,6 +36,19 @@ def _parse_size_flavour(name: str) -> dict[str, int | str | None]:
     return {"cpu": cpu, "gpu": gpu, "gpu_type": gpu_type}
 
 
+def validate_size_flavour_selection(
+    size_flavour_name: str | None,
+    num_cpu: int | None,
+    num_gpu: int | None,
+) -> None:
+    """Ensure at most one sizing strategy (by name, by CPU count, or by GPU count) is requested."""
+    provided = sum(value is not None for value in (size_flavour_name, num_cpu, num_gpu))
+    if provided > 1:
+        raise ValueError("Provide at most one of size_flavour_name, num_cpu, or num_gpu.")
+    if provided == 0:
+        raise ValueError("Provide one of size_flavour_name, num_cpu, or num_gpu.")
+
+
 def match_size_flavour(
     flavours: list[dict],
     num_cpu: int | None = None,

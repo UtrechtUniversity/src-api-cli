@@ -144,6 +144,31 @@ def test_expected_optional_parameter_keys_support_mapping_shape():
     assert result == ("username", "password")
 
 
+def test_validate_optional_parameters_allows_expected_keys():
+    client = ResearchCloudClient(token="token", session=DummySession())
+
+    client.validate_optional_parameters(
+        {"optional_parameters": {"username": {}, "password": {}}},
+        {"username": "alice"},
+    )
+
+
+def test_validate_optional_parameters_rejects_unexpected_keys():
+    client = ResearchCloudClient(token="token", session=DummySession())
+
+    with pytest.raises(ValueError, match="Unsupported optional parameter keys"):
+        client.validate_optional_parameters(
+            {"optional_parameters": {"username": {}}},
+            {"unexpected": "value"},
+        )
+
+
+def test_validate_optional_parameters_skips_when_none_supplied():
+    client = ResearchCloudClient(token="token", session=DummySession())
+
+    client.validate_optional_parameters({"optional_parameters": {"username": {}}}, None)
+
+
 def test_workspace_list_filters_multiple_statuses_client_side():
     session = DummySession([
         DummyResponse(

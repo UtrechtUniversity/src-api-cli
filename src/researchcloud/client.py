@@ -7,9 +7,7 @@ from urllib.parse import urljoin
 
 import aiohttp
 
-from researchcloud.builders import build_create_network_payload
 from researchcloud.config import (
-    DEFAULT_CLOUD_NAME,
     DEFAULT_CATALOG_BASE_URL,
     DEFAULT_USER_BASE_URL,
     DEFAULT_WALLET_BASE_URL,
@@ -220,62 +218,20 @@ class ResearchCloudClient:
             )
         return offering, size_flavours[0], os_flavours[0]
 
-    async def resolve_network_and_offering(
+    def validate_optional_parameters(
         self,
-        co_id: str,
-        products: list,
-        cloud_name: str,
-        network_name_hint: str | None = None,
-    ) -> tuple[dict, dict]:
-        networks = await self.catalog.list_items_with_offerings(
-            co_id,
-            products,
-            name=network_name_hint,
-            application_type="Network",
-        )
-        if not networks:
+        offering: Mapping[str, object],
+        optional_parameters: Mapping[str, str] | None,
+    ) -> None:
+        """Raise ValueError if optional_parameters contains keys unsupported by the offering."""
+        if not optional_parameters:
+            return
+        expected_keys = self.get_expected_optional_parameter_keys(offering)
+        if not expected_keys:
+            return
+        unexpected = sorted(key for key in optional_parameters if key not in expected_keys)
+        if unexpected:
             raise ValueError(
-                "No network found"
-                + (f" with name: {network_name_hint!r}." if network_name_hint else " for this CO/wallet.")
+                "Unsupported optional parameter keys for the selected application offering: "
+                f"{unexpected}. Expected keys: {sorted(expected_keys)}"
             )
-        if len(networks) > 1:
-            logger.warning("Multiple network entries found — using the first one: %r", networks[0]["name"])
-
-        network = networks[0]
-        offerings = await self.catalog.list_offerings_for_item(network["id"], co_id, products)
-        if not offerings:
-            raise ValueError(f"No offerings found for network {network['name']!r}.")
-
-        network_cloud_name = self.to_network_cloud_name(cloud_name)
-        cloud_offerings = [
-            offering for offering in offerings if offering["subscription"]["name"] == network_cloud_name
-        ]
-        if not cloud_offerings:
-            available = [offering["subscription"]["name"] for offering in offerings]
-            logger.warning(
-                "No network offering found for cloud %r (available: %s) — using the first available offering instead.",
-                network_cloud_name,
-                available,
-            )
-            cloud_offerings = offerings
-        return network, cloud_offerings[0]
-
-    async def create_network(
-        self,
-        co: dict,
-        wallet: dict,
-        products: list,
-        cloud_name: str = DEFAULT_CLOUD_NAME,
-        network_name: str = "",
-        network_name_hint: str | None = None,
-        network_description: str = "",
-    ) -> str:
-        network, offering = await self.resolve_network_and_offering(
-            co["id"],
-            products,
-            cloud_name,
-            network_name_hint,
-        )
-        payload = build_create_network_payload(co, wallet, network, offering, network_name, network_description)
-        response = await self.workspaces.create(payload)
-        return response["id"]

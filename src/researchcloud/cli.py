@@ -4,27 +4,15 @@ import argparse
 import asyncio
 import json
 import os
-import random
-import string
 import sys
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
 
 from researchcloud.client import ResearchCloudClient
-from researchcloud.config import DEFAULT_CLOUD_NAME
-from researchcloud.utils.flavours import match_size_flavour
-from researchcloud.builders import build_create_payload
-
-
-DEFAULT_WORKSPACE_ENDTIME = timedelta(days=3)
-DEFAULT_HOST_NAME_PREFIX = "ws"
-
-
-def _random_suffix(length: int = 5) -> str:
-    return "".join(random.choices(string.ascii_lowercase + string.digits, k=length))
+from researchcloud.config import DEFAULT_CLOUD_NAME, DEFAULT_HOST_NAME_PREFIX
+from researchcloud.utils.naming import generate_resource_name
 
 
 def pretty(data) -> None:
@@ -104,34 +92,6 @@ def validate_config(required: list[str] | None = None) -> None:
         sys.exit(1)
 
 
-def validate_workspace_end_time(end_time: str) -> None:
-    normalized = end_time.strip()
-    if normalized.endswith("Z"):
-        normalized = f"{normalized[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError as exc:
-        raise ValueError(
-            "--end-time must be a valid ISO 8601 datetime (for example 2026-12-31T23:59:59Z)."
-        ) from exc
-
-    if parsed.tzinfo is None:
-        raise ValueError("--end-time must include a timezone (use trailing 'Z' for UTC).")
-
-    now_utc = datetime.now(timezone.utc)
-    if parsed <= now_utc:
-        raise ValueError(
-            f"--end-time must be in the future. Current UTC time is "
-            f"{now_utc.isoformat().replace('+00:00', 'Z')}."
-        )
-
-
-def resolve_workspace_end_time(end_time: str | None) -> str:
-    if end_time and end_time.strip():
-        return end_time.strip()
-    return (datetime.now(timezone.utc) + DEFAULT_WORKSPACE_ENDTIME).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 async def list_networks_for_co(
     co_name: str,
     cloud_name: str = DEFAULT_CLOUD_NAME,
@@ -164,16 +124,16 @@ async def create_network_for_co(
 ) -> None:
     async with ResearchCloudClient.from_env() as client:
         co, wallet = await asyncio.gather(client.resolve_co(co_name), client.resolve_wallet(wallet_name))
+        selected_network_name = generate_resource_name(network_name, f"{host_name_base}-network")
         if dry_run:
             print(f"Dry run: would create private network in CO {co['co_name']!r} using wallet {wallet['name']!r}")
-            print(f"  network_name: {network_name or f'{host_name_base}-network-{_random_suffix()}'}")
+            print(f"  network_name: {selected_network_name}")
             print(f"  cloud_name: {cloud_name}")
             print(f"  network_cloud_name: {client.to_network_cloud_name(cloud_name)}")
             return
 
-        selected_network_name = network_name or f"{host_name_base}-network-{_random_suffix()}"
         products = wallet["budgets"][0]["products"]
-        network_id = await client.create_network(
+        network_id = await client.workspaces.create_network(
             co,
             wallet,
             products,
@@ -295,132 +255,46 @@ async def create_workspace(
     use_private_network: bool = False,
     optional_parameters: dict[str, str] | None = None,
 ) -> None:
-    size_selection_args = sum(value is not None for value in (size_flavour_name, num_cpu, num_gpu))
-    if size_selection_args > 1:
-        raise ValueError("Provide at most one of size_flavour_name, num_cpu, or num_gpu.")
-    if size_selection_args == 0:
-        raise ValueError("Provide one of size_flavour_name, num_cpu, or num_gpu.")
     validate_config()
-
-    normalized_host_name = host_name.strip() if host_name else ""
-    selected_host_name = normalized_host_name or f"{DEFAULT_HOST_NAME_PREFIX}_{_random_suffix()}"
-    selected_workspace_end_time = resolve_workspace_end_time(end_time)
-    validate_workspace_end_time(selected_workspace_end_time)
 
     async with ResearchCloudClient.from_env() as client:
         print("\n── Resolving resources ─────────────────────────────────────")
-        co, wallet = await asyncio.gather(client.resolve_co(co_name), client.resolve_wallet(wallet_name))
-        products = wallet["budgets"][0]["products"]
-        print(f"  CO          : {co['co_name']}  (id: {co['id']})")
-        print(f"  Wallet      : {wallet['name']}  (id: {wallet['id']})")
-        print(f"  Products    : {products}")
-
-        catalog_item = await client.resolve_catalog_item(catalog_item_name, co["id"], products)
-        print(f"  Catalog item: {catalog_item['name']}  (id: {catalog_item['id']})")
-
-        resolved_size_name = None if (num_cpu is not None or num_gpu is not None) else size_flavour_name
-        offering, size_flavour, os_flavour = await client.resolve_offering_and_flavours(
-            catalog_item,
-            co["id"],
-            products,
-            cloud_name,
-            os_flavour_name,
-            resolved_size_name,
-        )
-        if num_cpu is not None or num_gpu is not None:
-            size_flavour = match_size_flavour(
-                offering.get("flavours", []),
-                num_cpu=num_cpu,
-                num_gpu=num_gpu,
-                gpu_type=gpu_type,
-            )
-        if size_flavour is None:
-            raise ValueError("Could not resolve a size flavour for workspace creation.")
-        print(f"  Cloud       : {offering['subscription']['name']}")
-        print(f"  OS flavour  : {os_flavour['name']}")
-        print(f"  Size flavour: {size_flavour['name']}")
-        print(f"  Host name   : {selected_host_name}")
-        if optional_parameters:
-            print(f"  Optional parameters supplied: {sorted(optional_parameters.keys())}")
-
-        attached_network_ids: list[str | dict] = list(network_ids or [])
-        if use_private_network:
-            print("  Private network: looking for an existing one …")
-            existing_networks = await client.workspaces.list_networks(co["id"], cloud_name=cloud_name)
-            if existing_networks:
-                network = existing_networks[0]
-                network_id = network["id"]
-                network_ref = {
-                    "id": network_id,
-                    "name": network.get("name") or network_id,
-                    "type": network.get("type") or "network",
-                }
-                print(f"  Private network: reusing {network.get('name')!r}  (id: {network_id})")
-            elif dry_run:
-                network_id = "<new-network-id>"
-                network_ref = {"id": network_id, "name": network_id, "type": "network"}
-                print("  Private network: none found — a new one would be created (skipped for --dry-run).")
-            else:
-                network_name = f"{DEFAULT_HOST_NAME_PREFIX}-network-{_random_suffix()}"
-                print(f"  Private network: none found — creating {network_name!r} …")
-                network_id = await client.create_network(
-                    co,
-                    wallet,
-                    products,
-                    cloud_name,
-                    network_name,
-                    network_name_hint=network_name_hint,
-                )
-                print(f"  Private network: created (id: {network_id}), waiting until available …")
-                network = await client.workspaces.wait_for_network(network_id)
-                network_ref = {
-                    "id": network_id,
-                    "name": network.get("name") or network_name,
-                    "type": network.get("type") or "network",
-                }
-                print("  Private network: available.")
-            attached_network_ids = [network_ref]
-
-        print("────────────────────────────────────────────────────────────\n")
-        payload = build_create_payload(
-            co=co,
-            wallet=wallet,
-            catalog_item=catalog_item,
-            offering=offering,
-            os_flavour=os_flavour,
-            size_flavour=size_flavour,
+        plan = await client.workspaces.build_create_payload_from_names(
+            co_name=co_name,
+            wallet_name=wallet_name,
+            cloud_name=cloud_name,
+            catalog_item_name=catalog_item_name,
             workspace_name=workspace_name,
-            workspace_description=description,
-            end_time=selected_workspace_end_time,
-            host_name=selected_host_name,
-            storage_ids=storage_ids or [],
-            network_ids=attached_network_ids,
-            ip_ids=ip_ids or [],
-            dataset_names=dataset_names or [],
-            dataset_ids=dataset_ids or [],
+            os_flavour_name=os_flavour_name,
+            size_flavour_name=size_flavour_name,
+            num_cpu=num_cpu,
+            num_gpu=num_gpu,
+            gpu_type=gpu_type,
+            description=description,
+            end_time=end_time,
+            host_name=host_name,
+            host_name_prefix=DEFAULT_HOST_NAME_PREFIX,
+            network_name_hint=network_name_hint,
+            storage_ids=storage_ids,
+            network_ids=network_ids,
+            ip_ids=ip_ids,
+            dataset_names=dataset_names,
+            dataset_ids=dataset_ids,
+            use_private_network=use_private_network,
             optional_parameters=optional_parameters,
+            dry_run=dry_run,
+            on_progress=lambda message: print(f"  {message}"),
         )
-
-        if optional_parameters:
-            expected_optional_parameter_keys = client.get_expected_optional_parameter_keys(offering)
-            if expected_optional_parameter_keys:
-                unexpected = sorted(
-                    key for key in optional_parameters if key not in expected_optional_parameter_keys
-                )
-                if unexpected:
-                    raise ValueError(
-                        "Unsupported optional parameter keys for the selected application offering: "
-                        f"{unexpected}. Expected keys: {sorted(expected_optional_parameter_keys)}"
-                    )
+        print("────────────────────────────────────────────────────────────\n")
 
         if dry_run:
             print("── Dry run — payload that would be sent ────────────────────")
-            pretty(payload)
+            pretty(plan.payload)
             print("────────────────────────────────────────────────────────────")
             return
 
         print(f"Creating workspace {workspace_name!r} …")
-        response = await client.workspaces.create(payload)
+        response = await client.workspaces.create(plan.payload)
         workspace_id = response.get("id")
         print("\n✓ Workspace create request accepted (HTTP 201)")
         if not workspace_id:
