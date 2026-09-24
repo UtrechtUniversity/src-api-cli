@@ -89,18 +89,9 @@ def test_create_workspace_creates_and_waits_when_not_dry_run(monkeypatch):
     fake_client.workspaces.wait_until_ready.assert_awaited_once()
 
 
-def test_create_workspace_exits_when_token_missing(monkeypatch):
+def test_main_exits_when_token_missing(monkeypatch):
     monkeypatch.delenv("RESEARCH_CLOUD_TOKEN", raising=False)
+    monkeypatch.setattr(cli.sys, "argv", ["researchcloud", "delete-workspace", "--id", "ws-1"])
 
     with pytest.raises(SystemExit):
-        _run(
-            cli.create_workspace(
-                co_name="Example CO",
-                wallet_name="Example Wallet",
-                cloud_name="SURF HPC Cloud",
-                catalog_item_name="My App",
-                workspace_name="my-workspace",
-                os_flavour_name="Ubuntu 22.04",
-                size_flavour_name="8 Core - 32 GB",
-            )
-        )
+        cli.main()

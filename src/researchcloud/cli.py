@@ -255,8 +255,6 @@ async def create_workspace(
     use_private_network: bool = False,
     optional_parameters: dict[str, str] | None = None,
 ) -> None:
-    validate_config()
-
     async with ResearchCloudClient.from_env() as client:
         print("\n── Resolving resources ─────────────────────────────────────")
         plan = await client.workspaces.build_create_payload_from_names(
@@ -320,20 +318,61 @@ async def create_workspace(
     pretty(final_workspace)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Create or inspect SURF Research Cloud resources.")
+def _add_common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print the request details and exit without making a mutating request.",
     )
-    subparsers = parser.add_subparsers(dest="command")
 
-    create_workspace_parser = subparsers.add_parser("create-workspace", help="Create a workspace.")
-    create_workspace_parser.add_argument("--co", required=True, help="CO name.")
-    create_workspace_parser.add_argument("--wallet", required=True, help="Wallet name.")
-    create_workspace_parser.add_argument("--cloud", default=DEFAULT_CLOUD_NAME, help="Cloud subscription name.")
-    create_workspace_parser.add_argument("--name", required=True, help="Workspace name.")
+
+def _add_co_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--co", dest="co_name", required=True, help="CO name.")
+    parser.add_argument("--cloud", dest="cloud_name", default=DEFAULT_CLOUD_NAME, help="Cloud subscription name.")
+
+
+def _add_wallet_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--wallet", dest="wallet_name", required=True, help="Wallet name.")
+
+
+def _add_owner_filter_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--by-owner", action="store_true")
+
+
+def _add_attachment_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--storage-id", dest="storage_ids", action="append", default=[], help="Attach storage by ID.")
+    parser.add_argument("--network-id", dest="network_ids", action="append", default=[], help="Attach network by ID.")
+    parser.add_argument("--ip-id", dest="ip_ids", action="append", default=[], help="Attach IP by ID.")
+    parser.add_argument(
+        "--dataset-name",
+        dest="dataset_names",
+        action="append",
+        default=[],
+        help="Attach dataset by name.",
+    )
+    parser.add_argument("--dataset-id", dest="dataset_ids", action="append", default=[], help="Attach dataset by ID.")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Create or inspect SURF Research Cloud resources.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    common_options = argparse.ArgumentParser(add_help=False)
+    _add_common_options(common_options)
+    co_options = argparse.ArgumentParser(add_help=False)
+    _add_co_options(co_options)
+    wallet_options = argparse.ArgumentParser(add_help=False)
+    _add_wallet_options(wallet_options)
+    co_wallet_options = argparse.ArgumentParser(add_help=False, parents=[co_options, wallet_options])
+    owner_filter_options = argparse.ArgumentParser(add_help=False)
+    _add_owner_filter_options(owner_filter_options)
+
+    create_workspace_parser = subparsers.add_parser(
+        "create-workspace",
+        help="Create a workspace.",
+        parents=[common_options, co_wallet_options],
+    )
+    create_workspace_parser.add_argument("--name", dest="workspace_name", required=True, help="Workspace name.")
     create_workspace_parser.add_argument("--os", dest="os_flavour_name", required=True, help="OS flavour name.")
     create_workspace_parser.add_argument("--description", default="", help="Workspace description.")
     create_workspace_parser.add_argument(
@@ -353,60 +392,65 @@ def build_parser() -> argparse.ArgumentParser:
         "--network-name-hint",
         help="Private-network catalog item name hint (optional).",
     )
-    create_workspace_parser.add_argument("--storage-id", action="append", default=[], help="Attach storage by ID.")
-    create_workspace_parser.add_argument("--network-id", action="append", default=[], help="Attach network by ID.")
-    create_workspace_parser.add_argument("--ip-id", action="append", default=[], help="Attach IP by ID.")
-    create_workspace_parser.add_argument("--dataset-name", action="append", default=[], help="Attach dataset by name.")
-    create_workspace_parser.add_argument("--dataset-id", action="append", default=[], help="Attach dataset by ID.")
-    size_group = create_workspace_parser.add_mutually_exclusive_group()
-    size_group.required = True
+    _add_attachment_options(create_workspace_parser)
+    size_group = create_workspace_parser.add_mutually_exclusive_group(required=True)
     size_group.add_argument("--size-flavour", "--size", dest="size_flavour_name")
     size_group.add_argument("--num-cpu", type=int)
     size_group.add_argument("--num-gpu", type=int)
     create_workspace_parser.add_argument("--gpu-type")
-    create_workspace_parser.add_argument("--private-network", action="store_true")
-    create_workspace_parser.add_argument("--optional-parameter", action="append", default=[])
+    create_workspace_parser.add_argument("--private-network", dest="use_private_network", action="store_true")
+    create_workspace_parser.add_argument("--optional-parameter", dest="cli_parameters", action="append", default=[])
     create_workspace_parser.add_argument("--optional-parameters-json")
     create_workspace_parser.add_argument("--optional-parameters-file")
-    create_workspace_parser.add_argument("--dry-run", action="store_true")
 
-    get_networks_parser = subparsers.add_parser("get-networks", help="List private networks in a CO.")
-    get_networks_parser.add_argument("--co", required=True)
-    get_networks_parser.add_argument("--cloud", default=DEFAULT_CLOUD_NAME)
-    get_networks_parser.add_argument("--by-owner", action="store_true")
-    get_networks_parser.add_argument("--dry-run", action="store_true")
+    get_networks_parser = subparsers.add_parser(
+        "get-networks",
+        help="List private networks in a CO.",
+        parents=[common_options, co_options, owner_filter_options],
+    )
 
-    create_network_parser = subparsers.add_parser("create-network", help="Create a private network in a CO.")
-    create_network_parser.add_argument("--co", required=True)
-    create_network_parser.add_argument("--wallet", required=True)
-    create_network_parser.add_argument("--cloud", default=DEFAULT_CLOUD_NAME)
-    create_network_parser.add_argument("--name")
+    create_network_parser = subparsers.add_parser(
+        "create-network",
+        help="Create a private network in a CO.",
+        parents=[common_options, co_wallet_options],
+    )
+    create_network_parser.add_argument("--name", dest="network_name")
     create_network_parser.add_argument("--network-name-hint")
     create_network_parser.add_argument("--host-name-base", default="ws")
-    create_network_parser.add_argument("--dry-run", action="store_true")
 
-    delete_workspace_parser = subparsers.add_parser("delete-workspace", help="Delete a workspace by ID.")
-    delete_workspace_parser.add_argument("--id", required=True)
-    delete_workspace_parser.add_argument("--dry-run", action="store_true")
+    delete_workspace_parser = subparsers.add_parser(
+        "delete-workspace",
+        help="Delete a workspace by ID.",
+        parents=[common_options],
+    )
+    delete_workspace_parser.add_argument("--id", dest="workspace_id", required=True)
 
-    get_workspaces_parser = subparsers.add_parser("get-workspaces", help="List workspaces in a CO.")
-    get_workspaces_parser.add_argument("--co", required=True)
-    get_workspaces_parser.add_argument("--cloud", default=DEFAULT_CLOUD_NAME)
-    get_workspaces_parser.add_argument("--by-owner", action="store_true")
+    get_workspaces_parser = subparsers.add_parser(
+        "get-workspaces",
+        help="List workspaces in a CO.",
+        parents=[common_options, co_options, owner_filter_options],
+    )
     get_workspaces_parser.add_argument("--catalog-item-name")
-    get_workspaces_parser.add_argument("--name")
-    get_workspaces_parser.add_argument("--dry-run", action="store_true")
+    get_workspaces_parser.add_argument("--name", dest="workspace_name")
 
     get_offerings_parser = subparsers.add_parser(
         "get-application-offerings",
         help="List application offerings available to a CO.",
+        parents=[common_options, co_wallet_options],
     )
-    get_offerings_parser.add_argument("--co", required=True)
-    get_offerings_parser.add_argument("--wallet", required=True)
-    get_offerings_parser.add_argument("--cloud", default=DEFAULT_CLOUD_NAME)
-    get_offerings_parser.add_argument("--type", dest="application_type")
+    get_offerings_parser.add_argument(
+        "--type",
+        dest="application_type",
+        help="Application type filter. Omit to include all application types.",
+    )
     get_offerings_parser.add_argument("--name")
-    get_offerings_parser.add_argument("--dry-run", action="store_true")
+
+    get_networks_parser.set_defaults(handler=list_networks_for_co)
+    create_network_parser.set_defaults(handler=create_network_for_co)
+    delete_workspace_parser.set_defaults(handler=delete_workspace_by_id)
+    get_workspaces_parser.set_defaults(handler=list_workspaces_for_co)
+    get_offerings_parser.set_defaults(handler=list_application_offerings_for_co)
+    create_workspace_parser.set_defaults(handler=create_workspace)
     return parser
 
 
@@ -415,76 +459,13 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     validate_config()
-
-    if args.command == "get-networks":
-        asyncio.run(list_networks_for_co(args.co, args.cloud, args.by_owner, args.dry_run))
-    elif args.command == "create-network":
-        asyncio.run(
-            create_network_for_co(
-                args.co,
-                args.wallet,
-                args.cloud,
-                args.name,
-                args.network_name_hint,
-                args.host_name_base,
-                args.dry_run,
-            )
+    values = vars(args).copy()
+    handler = values.pop("handler")
+    values.pop("command")
+    if handler is create_workspace:
+        values["optional_parameters"] = parse_optional_parameters(
+            cli_parameters=values.pop("cli_parameters"),
+            json_blob=values.pop("optional_parameters_json"),
+            file_path=values.pop("optional_parameters_file"),
         )
-    elif args.command == "get-workspaces":
-        asyncio.run(
-            list_workspaces_for_co(
-                args.co,
-                args.cloud,
-                args.by_owner,
-                args.catalog_item_name,
-                args.name,
-                args.dry_run,
-            )
-        )
-    elif args.command == "delete-workspace":
-        asyncio.run(delete_workspace_by_id(args.id, args.dry_run))
-    elif args.command == "get-application-offerings":
-        asyncio.run(
-            list_application_offerings_for_co(
-                args.co,
-                args.wallet,
-                args.cloud,
-                args.application_type,
-                args.name,
-                args.dry_run,
-            )
-        )
-    elif args.command == "create-workspace":
-        optional_parameters = parse_optional_parameters(
-            cli_parameters=args.optional_parameter,
-            json_blob=args.optional_parameters_json,
-            file_path=args.optional_parameters_file,
-        )
-        asyncio.run(
-            create_workspace(
-                co_name=args.co,
-                wallet_name=args.wallet,
-                cloud_name=args.cloud,
-                catalog_item_name=args.catalog_item_name,
-                workspace_name=args.name,
-                os_flavour_name=args.os_flavour_name,
-                size_flavour_name=args.size_flavour_name,
-                num_cpu=args.num_cpu,
-                num_gpu=args.num_gpu,
-                gpu_type=args.gpu_type,
-                description=args.description,
-                end_time=args.end_time,
-                host_name=args.host_name,
-                network_name_hint=args.network_name_hint,
-                storage_ids=args.storage_id,
-                network_ids=args.network_id,
-                ip_ids=args.ip_id,
-                dataset_names=args.dataset_name,
-                dataset_ids=args.dataset_id,
-                dry_run=args.dry_run,
-                use_private_network=args.private_network,
-                optional_parameters=optional_parameters,
-            )
-        )
-    else:
-        raise RuntimeError(f"Unknown command: {args.command!r}. Use --help for usage information.")
+    asyncio.run(handler(**values))
